@@ -57,6 +57,41 @@ type Config struct {
 	InsertChunkSize int `psy:"insert-chunk-size"`
 }
 
+var specMap = map[string]*sdk.Spec{
+	"connection": {
+		Name:        "connection",
+		Description: "Connection string to a mysql host configured, having a database with the target table",
+		Required:    true,
+		Type:        cty.String,
+	},
+	"table": {
+		Name:        "table",
+		Description: "Table to stick items onto",
+		Required:    true,
+		Type:        cty.String,
+	},
+	"fields": {
+		Name:        "fields",
+		Description: "Fields to extract and stick onto the table",
+		Required:    true,
+		Type:        cty.List(cty.String),
+	},
+	"encoding": {
+		Name:        "encoding",
+		Description: "Encoding that incoming data will be marhsaled with. For now, only JSON is supported",
+		Required:    false,
+		Type:        cty.String,
+		Default:     cty.StringVal("JSON"),
+	},
+	"insert-chunk-size": {
+		Name:        "insert-chunk-size",
+		Description: "Number of items to insert at once, with a single query",
+		Required:    false,
+		Type:        cty.Number,
+		Default:     cty.NumberIntVal(1),
+	},
+}
+
 func Plugin() *sdk.Plugin {
 	return &sdk.Plugin{
 		Name: "mysql",
@@ -64,40 +99,7 @@ func Plugin() *sdk.Plugin {
 			{
 				Kinds: sdk.CONSUMER,
 				Name:  "mysql-table",
-				Spec: map[string]*sdk.Spec{
-					"connection": {
-						Name:        "connection",
-						Description: "Connection string to a mysql host configured, having a database with the target table",
-						Required:    true,
-						Type:        cty.String,
-					},
-					"table": {
-						Name:        "table",
-						Description: "Table to stick items onto",
-						Required:    true,
-						Type:        cty.String,
-					},
-					"fields": {
-						Name:        "fields",
-						Description: "Fields to extract and stick onto the table",
-						Required:    true,
-						Type:        cty.List(cty.String),
-					},
-					"encoding": {
-						Name:        "encoding",
-						Description: "Encoding that incoming data will be marhsaled with. For now, only JSON is supported",
-						Required:    false,
-						Type:        cty.String,
-						Default:     cty.StringVal("JSON"),
-					},
-					"insert-chunk-size": {
-						Name:        "insert-chunk-size",
-						Description: "Number of items to insert at once, with a single query",
-						Required:    false,
-						Type:        cty.Number,
-						Default:     cty.NumberIntVal(1),
-					},
-				},
+				Spec:  specMap,
 				ProvideConsumer: func(parse sdk.Parser, _ sdk.SpecParser) (sdk.Consumer, error) {
 					config := new(Config)
 					if err := parse(config); err != nil {
@@ -134,6 +136,59 @@ func Plugin() *sdk.Plugin {
 								errs <- err
 								return
 							}
+						}
+					}, nil
+				},
+			},
+			{
+				Kinds: sdk.TRANSFORMER,
+				Name:  "mysql-filter",
+				Spec:  specMap,
+				ProvideTransformer: func(parse sdk.Parser, _ sdk.SpecParser) (sdk.Transformer, error) {
+					config := new(Config)
+					if err := parse(config); err != nil {
+						return nil, err
+					}
+
+					if len(config.Fields) != 1 {
+						return nil, fmt.Errorf("TODO exactly 1 filter field supported for now")
+					}
+
+					decode, err := decodeFor(config.Encoding)
+					if err != nil {
+						return nil, err
+					}
+
+					db, err := sql.Open("mysql", config.Connection)
+					if err != nil {
+						return nil, err
+					}
+
+					db.SetConnMaxLifetime(30 * time.Second)
+					query := fmt.Sprintf("SELECT count(*) FROM %s where %s=?", config.Table, config.Fields[0])
+					return func(in []byte) ([]byte, error) {
+						dataDecoded, err := decode(in)
+						if err != nil {
+							return nil, err
+						}
+
+						rows, err := db.Query(query, dataDecoded[config.Fields[0]])
+						if err != nil {
+							return nil, err
+						}
+
+						defer rows.Close()
+						rows.Next()
+
+						count := -1
+						rows.Scan(&count)
+						switch count {
+						case 1:
+							return nil, nil
+						case 0:
+							return in, nil
+						default:
+							return nil, fmt.Errorf("count(*) scanned as %d, or did not scan if -1", count)
 						}
 					}, nil
 				},
