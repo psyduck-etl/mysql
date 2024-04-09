@@ -8,7 +8,7 @@ github.com/go-sql-driver/mysql v1.8.1 h1:LedoTUt/eveggdHS9qUFC1EFSa8bU2+1pZjSRpv
 github.com/go-sql-driver/mysql v1.8.1/go.mod h1:wEBSXgmK//2ZFJyE+qWnIsVGmvmEKlqwuVSjsCm7DZg=
 github.com/google/go-cmp v0.3.1 h1:Xye71clBPdm5HgqGwUkwhbynsUJZhDbS20FvLhQ2izg=
 github.com/google/go-cmp v0.3.1/go.mod h1:8QqcDgzrUqlUb/G2PQTWiueGozuR1884gddMywk6iLU=
-github.com/psyduck-etl/sdk v0.2.1 h1:1GbVuoUm/srqOtinKn8iNR5UsJ6MKAl4mTkVUqMrW+k=
-github.com/psyduck-etl/sdk v0.2.1/go.mod h1:2VGXcNk6q3kRiofv5MAreI6HioPAtjppzc8G7w7V9Qc=
+github.com/psyduck-etl/sdk v0.2.2 h1:tWkrCZzpLdMNfYoB4R5z7M2OHZZxHlJVKrgPZIp808c=
+github.com/psyduck-etl/sdk v0.2.2/go.mod h1:Acbes42o0I9FEyyft/6GKpxm3GTt/44JwZrU6rdJQwA=
 golang.org/x/text v0.14.0 h1:ScX5w1eTa3QqT8oi6+ziP7dTV1S2+ALU0bI+0zXKWiQ=
 golang.org/x/text v0.14.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=
