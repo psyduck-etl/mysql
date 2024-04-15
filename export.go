@@ -100,7 +100,7 @@ func Plugin() *sdk.Plugin {
 				Kinds: sdk.CONSUMER,
 				Name:  "mysql-table",
 				Spec:  specMap,
-				ProvideConsumer: func(parse sdk.Parser, _ sdk.SpecParser) (sdk.Consumer, error) {
+				ProvideConsumer: func(parse sdk.Parser) (sdk.Consumer, error) {
 					config := new(Config)
 					if err := parse(config); err != nil {
 						return nil, err
@@ -144,7 +144,7 @@ func Plugin() *sdk.Plugin {
 				Kinds: sdk.TRANSFORMER,
 				Name:  "mysql-filter",
 				Spec:  specMap,
-				ProvideTransformer: func(parse sdk.Parser, _ sdk.SpecParser) (sdk.Transformer, error) {
+				ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
 					config := new(Config)
 					if err := parse(config); err != nil {
 						return nil, err
