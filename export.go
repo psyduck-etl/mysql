@@ -35,6 +35,20 @@ func repeat[T any](r T, count int) []T {
 	return ts
 }
 
+func flat[T any](c [][]T) []T {
+	size := 0
+	for _, sub := range c {
+		size += len(sub)
+	}
+	f := make([]T, size)
+	ptr := 0
+	for _, sub := range c {
+		copy(f[ptr:ptr+len(sub)], sub)
+		ptr += len(sub)
+	}
+	return f
+}
+
 func pickOrdered(fields []string, kvs map[string]any) []any {
 	picked := make([]any, len(fields))
 	for i, f := range fields {
@@ -46,6 +60,17 @@ func pickOrdered(fields []string, kvs map[string]any) []any {
 	}
 
 	return picked
+}
+
+func queryBlank(fields, chunks int) string {
+	return strings.Join(repeat( // "(?,...), " * chunks
+		"("+strings.Join(repeat("?", fields), ", ")+")", // "?, " * len(fields)
+		chunks), ", ")
+}
+
+func queryFormattable(table string, fields []string, chunk int) string {
+	return fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES %s",
+		table, strings.Join(fields, ", "), queryBlank(len(fields), chunk))
 }
 
 type Config struct {
@@ -117,22 +142,34 @@ func Plugin() *sdk.Plugin {
 					}
 
 					db.SetConnMaxLifetime(30 * time.Second)
-
-					query := fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)",
-						config.Table, strings.Join(config.Fields, ", "), strings.Join(repeat("?", len(config.Fields)), ", "))
-
+					queryFmt := queryFormattable(config.Table, config.Fields, config.InsertChunkSize)
 					return func(recv <-chan []byte, errs chan<- error, done chan<- struct{}) {
 						defer close(done)
 						defer close(errs)
 
-						for data := range recv {
-							dataDecoded, err := decode(data)
-							if err != nil {
-								errs <- err
-								return
+						for {
+							chunk := make([][]any, config.InsertChunkSize)
+							for i := 0; i < config.InsertChunkSize; i++ {
+								chunk[i] = make([]any, len(config.Fields))
+								data := <-recv
+								if data == nil {
+									if _, err := db.Exec(queryFormattable(config.Table, config.Fields, i)); err != nil {
+										errs <- err
+									}
+
+									return
+								}
+
+								dataDecoded, err := decode(data)
+								if err != nil {
+									errs <- err
+									return
+								}
+
+								copy(chunk[i], pickOrdered(config.Fields, dataDecoded))
 							}
 
-							if _, err := db.Exec(query, pickOrdered(config.Fields, dataDecoded)...); err != nil {
+							if _, err := db.Exec(queryFmt, flat(chunk)); err != nil {
 								errs <- err
 								return
 							}
