@@ -159,7 +159,7 @@ func Plugin() *sdk.Plugin {
 								data := <-recv
 								if data == nil {
 									if _, err := db.Exec(queryFormattable(config.Table, config.Fields, i)); err != nil {
-										errs <- err
+										errs <- fmt.Errorf("failed to insert chunk (fallback): %s", err)
 									}
 
 									return
@@ -167,15 +167,15 @@ func Plugin() *sdk.Plugin {
 
 								dataDecoded, err := decode(data)
 								if err != nil {
-									errs <- err
+									errs <- fmt.Errorf("failed to decode data %v: %s", data, err)
 									return
 								}
 
 								copy(chunk[i], pickOrdered(config.Fields, dataDecoded))
 							}
 
-							if _, err := db.Exec(queryFmt, flat(chunk)); err != nil {
-								errs <- err
+							if _, err := db.Exec(queryFmt, flat(chunk)...); err != nil {
+								errs <- fmt.Errorf("failed to insert chunk: %s", err)
 								return
 							}
 						}
