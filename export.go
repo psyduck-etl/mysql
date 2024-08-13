@@ -131,6 +131,11 @@ func Plugin() *sdk.Plugin {
 						return nil, err
 					}
 
+					if len(config.Fields)*config.InsertChunkSize > 65_535 {
+						return nil, fmt.Errorf("too many placeholders, %d ( %d fields * %d ) overflows u16",
+							len(config.Fields)*config.InsertChunkSize, len(config.Fields), config.InsertChunkSize)
+					}
+
 					decode, err := decodeFor(config.Encoding)
 					if err != nil {
 						return nil, err
