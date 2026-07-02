@@ -10,9 +10,8 @@ import (
 // decoder turns a raw record into a field->value map.
 type decoder func(in []byte) (map[string]any, error)
 
-// execer is the subset of *sql.DB / *sql.Tx used by the consumer, so the
-// batched-insert logic can run against either a plain connection or an
-// open transaction (snapshot mode).
+// execer is the subset of *sql.DB used to run the batched inserts. It lets
+// the batching loop be exercised in tests against a fake.
 type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
