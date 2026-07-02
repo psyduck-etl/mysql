@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/psyduck-etl/sdk"
@@ -18,8 +19,7 @@ type Config struct {
 	// consumer (mysql.table)
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
-	Snapshot        bool   `psy:"snapshot"`
-	Truncate        bool   `psy:"truncate"`
+	Schema          string `psy:"schema"`
 
 	// transformer (mysql.filter)
 	PassWhen  string `psy:"pass-when"`
@@ -84,18 +84,11 @@ var consumeSpec = []*sdk.Spec{
 		Default:     "insert-ignore",
 	},
 	{
-		Name:        "snapshot",
-		Description: "Load every record inside a single transaction, committing only on a clean finish. The table never exposes a partial load",
+		Name:        "schema",
+		Description: "Optional column/constraint definitions. When set, the plugin runs CREATE TABLE IF NOT EXISTS <table> (<schema>) before consuming, so the table is guaranteed to exist. Trusted, author-supplied config only",
 		Required:    false,
-		Type:        sdk.TypeBool,
-		Default:     false,
-	},
-	{
-		Name:        "truncate",
-		Description: "When snapshot is set, TRUNCATE the table at the start of the transaction so the load fully replaces prior contents",
-		Required:    false,
-		Type:        sdk.TypeBool,
-		Default:     false,
+		Type:        sdk.TypeString,
+		Default:     "",
 	},
 }
 
@@ -146,6 +139,16 @@ func Plugin() sdk.Plugin {
 				db, err := openDB(config.Connection)
 				if err != nil {
 					return nil, err
+				}
+
+				if config.Schema != "" {
+					create, err := buildCreateTable(config.Table, config.Schema)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := db.Exec(create); err != nil {
+						return nil, fmt.Errorf("ensure table %s: %w", config.Table, err)
+					}
 				}
 
 				return consumeInto(db, config, decode), nil

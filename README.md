@@ -1,14 +1,19 @@
 # psyduck mysql plugin
 
 A [MySQL](https://dev.mysql.com/) plugin for
-[Psyduck](https://github.com/psyduck-etl/sdk), aimed at snapshot-style
-ingestion from external sources. It exposes two resources:
+[Psyduck](https://github.com/psyduck-etl/sdk), aimed at ingesting snapshots of
+external resources. It exposes two resources:
 
-- `mysql.table` — a **consumer** that batch-loads records into a table, with
-  optional transactional snapshot semantics;
+- `mysql.table` — a **consumer** that batch-loads records into a table, and can
+  create the table from a schema if it doesn't exist yet;
 - `mysql.filter` — a **transformer** that asks the database a yes/no question
   about each record (does it already exist? is it within some bound?) and
   passes or drops it accordingly.
+
+Here a **snapshot** is a single record capturing some external resource — a
+user profile, a post — at a point in time. Each captured record is appended as
+its own row, so re-capturing the same entity later just adds another row
+representing it at that later moment.
 
 Built against `github.com/psyduck-etl/sdk` **v0.5.0**.
 
@@ -77,8 +82,7 @@ Batch-loads decoded records into a table.
 | `encoding` | string | `JSON` | Record codec (only `JSON` today) |
 | `insert-chunk-size` | int | `1` | Rows buffered per `INSERT`. Records accumulate and flush as one multi-row statement per chunk, and again on close |
 | `write-mode` | string | `insert-ignore` | `insert-ignore` (skip key collisions), `insert` (fail on collision), `replace`, or `upsert` (`INSERT … ON DUPLICATE KEY UPDATE`) |
-| `snapshot` | bool | `false` | Run the whole load in one transaction, committing only on a clean finish. The table never exposes a partial load |
-| `truncate` | bool | `false` | With `snapshot`, `TRUNCATE` the table at the start of the transaction so the load fully replaces prior contents |
+| `schema` | string | `""` | Column/constraint definitions. When set, the plugin runs `CREATE TABLE IF NOT EXISTS <table> (<schema>)` before consuming. **Trusted, author-supplied config only** |
 
 ### Chunked / batched loading
 
@@ -95,24 +99,32 @@ consume "mysql.table" "load" {
 }
 ```
 
-### Snapshot loading
+### Ensuring the table exists
 
-To ingest an external dataset as an all-or-nothing point-in-time snapshot,
-wrap the load in a transaction and replace the table's contents:
+If the destination table might not exist, give it a `schema` — the column and
+constraint definitions that go inside the `CREATE TABLE (...)`. The plugin
+issues `CREATE TABLE IF NOT EXISTS <table> (<schema>)` once, before consuming,
+so the load never fails on a missing table:
 
 ```hcl
-consume "mysql.table" "snapshot" {
-  connection        = "etl:etl@tcp(localhost:3306)/warehouse"
-  table             = "customers"
-  fields            = ["id", "name", "email"]
-  insert-chunk-size = 1000
-  snapshot          = true   # commit once, at the end
-  truncate          = true   # full replace: clear first, inside the txn
+consume "mysql.table" "capture-posts" {
+  connection = "etl:etl@tcp(localhost:3306)/warehouse"
+  table      = "post_snapshots"
+  fields     = ["post_id", "body", "captured_at"]
+  schema     = <<-SQL
+    id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+    post_id     BIGINT NOT NULL,
+    body        TEXT,
+    captured_at TIMESTAMP NOT NULL,
+    INDEX (post_id, captured_at)
+  SQL
 }
 ```
 
-If anything fails partway, the transaction rolls back and the previous
-contents remain visible — readers never see a half-loaded table.
+Each incoming record is appended as its own row — capturing the same
+`post_id` again later adds another snapshot with a new `captured_at`. `schema`
+is interpolated as-is, so treat it as trusted pipeline config, never
+record-derived data.
 
 ---
 

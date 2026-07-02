@@ -87,6 +87,16 @@ func buildInsert(mode, table string, fields []string, rowCount int) (string, err
 		verb, table, strings.Join(fields, ", "), rows, suffix), nil
 }
 
+// buildCreateTable renders a CREATE TABLE IF NOT EXISTS from a trusted,
+// author-supplied column/constraint body (the text that goes inside the
+// parentheses).
+func buildCreateTable(table, schema string) (string, error) {
+	if strings.TrimSpace(schema) == "" {
+		return "", fmt.Errorf("buildCreateTable: empty schema")
+	}
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, schema), nil
+}
+
 // buildExists renders an existence probe. match fields are ANDed together as
 // equality predicates against positional args; filterSQL, when set, is a
 // trusted (author-supplied, not record-derived) clause ANDed on top so

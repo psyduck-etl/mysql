@@ -6,15 +6,12 @@ import (
 	"github.com/psyduck-etl/sdk"
 )
 
-// consumeInto builds a Consumer that decodes incoming records and writes
-// them to config.Table in batches of at most InsertChunkSize rows per
-// statement.
+// consumeInto builds a Consumer that decodes incoming records and writes them
+// to config.Table in batches of at most InsertChunkSize rows per statement.
 //
-// When Snapshot is set the whole load runs inside a single transaction
-// (optionally TRUNCATE-ing the table first), so the table only ever
-// reflects a complete, point-in-time load: the transaction commits on a
-// clean drain and rolls back on any error. This is the "snapshot-like
-// ingestion" mode — a partially written table is never visible.
+// Each record is a point-in-time capture of some external resource, appended
+// as its own row: re-ingesting the same entity later simply adds another row
+// representing it at that later moment.
 func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 	chunk := config.InsertChunkSize
 	if chunk < 1 {
@@ -24,31 +21,6 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 	return func(recv <-chan []byte, errs chan<- error, done chan<- struct{}) {
 		defer close(done)
 		defer close(errs)
-
-		var exec execer = db
-		var tx *sql.Tx
-		if config.Snapshot {
-			var err error
-			if tx, err = db.Begin(); err != nil {
-				errs <- err
-				return
-			}
-			if config.Truncate {
-				if _, err := tx.Exec("TRUNCATE TABLE " + config.Table); err != nil {
-					_ = tx.Rollback()
-					errs <- err
-					return
-				}
-			}
-			exec = tx
-		}
-
-		fail := func(err error) {
-			if tx != nil {
-				_ = tx.Rollback()
-			}
-			errs <- err
-		}
 
 		batch := make([][]any, 0, chunk)
 		flush := func() error {
@@ -63,7 +35,7 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 			for _, row := range batch {
 				args = append(args, row...)
 			}
-			_, err = exec.Exec(query, args...)
+			_, err = db.Exec(query, args...)
 			batch = batch[:0]
 			return err
 		}
@@ -71,28 +43,21 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 		for data := range recv {
 			decoded, err := decode(data)
 			if err != nil {
-				fail(err)
+				errs <- err
 				return
 			}
 
 			batch = append(batch, pickOrdered(config.Fields, decoded))
 			if len(batch) >= chunk {
 				if err := flush(); err != nil {
-					fail(err)
+					errs <- err
 					return
 				}
 			}
 		}
 
 		if err := flush(); err != nil {
-			fail(err)
-			return
-		}
-
-		if tx != nil {
-			if err := tx.Commit(); err != nil {
-				errs <- err
-			}
+			errs <- err
 		}
 	}
 }

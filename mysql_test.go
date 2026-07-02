@@ -119,6 +119,21 @@ func TestBuildExists(t *testing.T) {
 	}
 }
 
+func TestBuildCreateTable(t *testing.T) {
+	got, err := buildCreateTable("captures", "id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "CREATE TABLE IF NOT EXISTS captures (id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP)"
+	if got != want {
+		t.Fatalf("buildCreateTable =\n  %q\nwant\n  %q", got, want)
+	}
+
+	if _, err := buildCreateTable("t", "   "); err == nil {
+		t.Fatal("expected error for empty schema")
+	}
+}
+
 func TestPickOrdered(t *testing.T) {
 	got := pickOrdered([]string{"a", "b", "c"}, map[string]any{"a": 1, "c": 3})
 	want := []any{1, nil, 3}
