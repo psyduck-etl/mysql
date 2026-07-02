@@ -15,13 +15,13 @@ type Config struct {
 	Fields     []string `psy:"fields"`
 	Encoding   string   `psy:"encoding"`
 
-	// consumer (mysql-table)
+	// consumer (mysql.table)
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
 	Snapshot        bool   `psy:"snapshot"`
 	Truncate        bool   `psy:"truncate"`
 
-	// transformer (mysql-filter)
+	// transformer (mysql.filter)
 	PassWhen  string `psy:"pass-when"`
 	FilterSQL string `psy:"filter-sql"`
 }
@@ -130,7 +130,7 @@ func Plugin() sdk.Plugin {
 	return sdk.NewInProc("mysql",
 		&sdk.Resource{
 			Kinds: sdk.CONSUMER,
-			Name:  "mysql-table",
+			Name:  "table",
 			Spec:  consumeSpec,
 			ProvideConsumer: func(parse sdk.Parser) (sdk.Consumer, error) {
 				config := new(Config)
@@ -153,7 +153,7 @@ func Plugin() sdk.Plugin {
 		},
 		&sdk.Resource{
 			Kinds: sdk.TRANSFORMER,
-			Name:  "mysql-filter",
+			Name:  "filter",
 			Spec:  filterSpec,
 			ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
 				config := new(Config)
