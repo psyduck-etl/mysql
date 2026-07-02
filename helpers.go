@@ -61,12 +61,12 @@ func buildInsert(mode, table string, fields []string, rowCount int) (string, err
 		return "", fmt.Errorf("buildInsert: rowCount must be >= 1, got %d", rowCount)
 	}
 
-	verb, suffix := "INSERT IGNORE INTO", ""
+	verb, suffix := "INSERT INTO", ""
 	switch mode {
-	case "", "insert-ignore":
-		// default: skip rows that collide on a unique key
-	case "insert":
-		verb = "INSERT INTO"
+	case "", "insert":
+		// default: fail loudly on a unique-key collision
+	case "insert-ignore":
+		verb = "INSERT IGNORE INTO"
 	case "replace":
 		verb = "REPLACE INTO"
 	case "upsert":
@@ -94,23 +94,4 @@ func buildCreateTable(table, schema string) (string, error) {
 		return "", fmt.Errorf("buildCreateTable: empty schema")
 	}
 	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, schema), nil
-}
-
-// buildExists renders an existence probe. match fields are ANDed together as
-// equality predicates against positional args; filterSQL, when set, is a
-// trusted (author-supplied, not record-derived) clause ANDed on top so
-// callers can express bounded criteria like "scanned_at > NOW() - INTERVAL 1 HOUR".
-func buildExists(table string, fields []string, filterSQL string) (string, error) {
-	clauses := make([]string, 0, len(fields)+1)
-	for _, f := range fields {
-		clauses = append(clauses, fmt.Sprintf("%s=?", f))
-	}
-	if strings.TrimSpace(filterSQL) != "" {
-		clauses = append(clauses, "("+filterSQL+")")
-	}
-	if len(clauses) == 0 {
-		return "", fmt.Errorf("buildExists: need at least one field or a filter-sql clause")
-	}
-	return fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s)",
-		table, strings.Join(clauses, " AND ")), nil
 }

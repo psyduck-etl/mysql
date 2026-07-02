@@ -81,7 +81,7 @@ Batch-loads decoded records into a table.
 | `fields` | list(string) | *(required)* | Columns to write, in order; picked from each record by name |
 | `encoding` | string | `JSON` | Record codec (only `JSON` today) |
 | `insert-chunk-size` | int | `1` | Rows buffered per `INSERT`. Records accumulate and flush as one multi-row statement per chunk, and again on close |
-| `write-mode` | string | `insert-ignore` | `insert-ignore` (skip key collisions), `insert` (fail on collision), `replace`, or `upsert` (`INSERT … ON DUPLICATE KEY UPDATE`) |
+| `write-mode` | string | `insert` | `insert` (fail on a unique-key collision), `insert-ignore` (silently skip collisions), `replace`, or `upsert` (`INSERT … ON DUPLICATE KEY UPDATE`) |
 | `schema` | string | `""` | Column/constraint definitions. When set, the plugin runs `CREATE TABLE IF NOT EXISTS <table> (<schema>)` before consuming. **Trusted, author-supplied config only** |
 
 ### Chunked / batched loading
@@ -130,63 +130,68 @@ record-derived data.
 
 ## Resource: `mysql.filter` (transformer)
 
-Probes the database for each record and passes it through unchanged or drops
-it. The question is: *does a row exist in `table` matching every one of
-`fields` (equality against the record's values) and satisfying the optional
-`filter-sql` clause?*
+Runs one SQL query per record and passes the record through unchanged when the
+query's scalar result equals `pass-when` (compared as text); otherwise the
+record is dropped. All the predicate logic lives in the query, so a single
+resource covers existence checks, de-duplication, recency windows, referential
+gates, and anything else you can express in SQL.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `connection` | string | *(required)* | DSN |
-| `table` | string | *(required)* | Table to probe |
-| `fields` | list(string) | *(required unless `filter-sql` set)* | Record fields matched by equality against columns of the same name |
-| `encoding` | string | `JSON` | Record codec |
-| `pass-when` | string | `absent` | `absent`: pass records with **no** matching row (de-duplication); `present`: pass only records that **do** match |
-| `filter-sql` | string | `""` | Trusted SQL predicate ANDed onto the probe, e.g. a recency window. **Author-supplied config only — never interpolate record data here** |
+| `query` | string | *(required)* | SQL query returning a single scalar. Reference record fields as `:name` placeholders — they are bound as parameters, never interpolated. **Trusted, author-supplied config** |
+| `pass-when` | string | `1` | The record passes when the query's scalar result equals this value (as text); otherwise it is dropped |
+| `encoding` | string | `JSON` | Record codec used to resolve `:name` placeholders |
+
+Record fields are referenced as `:name` and bound safely as query parameters —
+the record's *values* never touch the SQL text, only the query you write does.
 
 ### De-duplication (don't ingest twice)
 
-`pass-when = "absent"` keeps only records that aren't already in the target
-table — an idempotent ingest guard:
+Keep only records not already in the target table:
 
 ```hcl
 transform "mysql.filter" "dedup" {
   connection = "etl:etl@tcp(localhost:3306)/warehouse"
-  table      = "orders"
-  fields     = ["order_id"]
-  pass-when  = "absent"
+  query      = "SELECT EXISTS(SELECT 1 FROM orders WHERE order_id = :order_id)"
+  pass-when  = "0"   # EXISTS returns 0 when the order is new -> pass it
 }
 ```
 
 ### Bounded criteria (don't re-scan recent sources)
 
-`filter-sql` adds a trusted predicate, so you can express "have we scanned
-this source recently?" and skip records whose source was touched in the last
-hour:
+"Have we scanned this source in the last hour?" — drop records whose source was
+touched inside the window:
 
 ```hcl
 transform "mysql.filter" "skip-recent" {
   connection = "etl:etl@tcp(localhost:3306)/warehouse"
-  table      = "scan_log"
-  fields     = ["source"]
-  filter-sql = "scanned_at > NOW() - INTERVAL 1 HOUR"
-  pass-when  = "absent"   # drop sources scanned within the window
+  query      = <<-SQL
+    SELECT EXISTS(
+      SELECT 1 FROM scan_log
+      WHERE source = :source AND scanned_at > NOW() - INTERVAL 1 HOUR
+    )
+  SQL
+  pass-when  = "0"   # 0 = not scanned recently -> pass
 }
 ```
 
 ### Referential gate (only ingest known entities)
 
-`pass-when = "present"` inverts the check — pass only records that match an
-existing row, e.g. events for customers you already know about:
+Pass only records that match an existing row — e.g. events for customers you
+already know about:
 
 ```hcl
 transform "mysql.filter" "known-customers" {
   connection = "etl:etl@tcp(localhost:3306)/warehouse"
-  table      = "customers"
-  fields     = ["customer_id"]
-  pass-when  = "present"
+  query      = "SELECT EXISTS(SELECT 1 FROM customers WHERE customer_id = :customer_id)"
+  pass-when  = "1"   # 1 = customer exists -> pass
 }
 ```
+
+Because the whole query is yours, `pass-when` isn't limited to `0`/`1` — a
+query returning a status column, a count, or any scalar can gate on its exact
+value.
 
 ---
 
@@ -205,9 +210,8 @@ produce "amqp.queue" "orders-in" {
 
 transform "mysql.filter" "dedup" {
   connection = "etl:etl@tcp(localhost:3306)/warehouse"
-  table      = "orders"
-  fields     = ["order_id"]
-  pass-when  = "absent"
+  query      = "SELECT EXISTS(SELECT 1 FROM orders WHERE order_id = :order_id)"
+  pass-when  = "0"
 }
 
 consume "mysql.table" "load" {

@@ -10,20 +10,24 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// Config configures the mysql.table consumer.
 type Config struct {
 	Connection string   `psy:"connection"`
 	Table      string   `psy:"table"`
 	Fields     []string `psy:"fields"`
 	Encoding   string   `psy:"encoding"`
 
-	// consumer (mysql.table)
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
 	Schema          string `psy:"schema"`
+}
 
-	// transformer (mysql.filter)
-	PassWhen  string `psy:"pass-when"`
-	FilterSQL string `psy:"filter-sql"`
+// FilterConfig configures the mysql.filter transformer.
+type FilterConfig struct {
+	Connection string `psy:"connection"`
+	Encoding   string `psy:"encoding"`
+	Query      string `psy:"query"`
+	PassWhen   string `psy:"pass-when"`
 }
 
 func openDB(connection string) (*sql.DB, error) {
@@ -78,10 +82,10 @@ var consumeSpec = []*sdk.Spec{
 	},
 	{
 		Name:        "write-mode",
-		Description: "How to write rows: insert-ignore (skip key collisions), insert (fail on collision), replace, or upsert (INSERT ... ON DUPLICATE KEY UPDATE)",
+		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), replace, or upsert (INSERT ... ON DUPLICATE KEY UPDATE)",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "insert-ignore",
+		Default:     "insert",
 	},
 	{
 		Name:        "schema",
@@ -94,28 +98,19 @@ var consumeSpec = []*sdk.Spec{
 
 var filterSpec = []*sdk.Spec{
 	specConnection,
-	specTable,
 	specEncoding,
 	{
-		Name:        "fields",
-		Description: "Record fields matched by equality against columns of the same name to probe for an existing row",
-		Required:    false,
-		Type:        sdk.TypeList,
-		ElemType:    &sdk.Spec{Type: sdk.TypeString},
+		Name:        "query",
+		Description: "SQL query returning a single scalar value. Reference incoming record fields as :name placeholders — they are bound as parameters, never interpolated into the SQL text. Trusted, author-supplied config",
+		Required:    true,
+		Type:        sdk.TypeString,
 	},
 	{
 		Name:        "pass-when",
-		Description: "absent: pass records with no matching row (de-duplication); present: pass only records that have a matching row",
+		Description: "The record passes when the query's scalar result equals this value (compared as text); otherwise it is dropped",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "absent",
-	},
-	{
-		Name:        "filter-sql",
-		Description: "Optional trusted SQL predicate ANDed onto the existence probe, e.g. 'scanned_at > NOW() - INTERVAL 1 HOUR'. Author-supplied config only; never interpolate record data here",
-		Required:    false,
-		Type:        sdk.TypeString,
-		Default:     "",
+		Default:     "1",
 	},
 }
 
@@ -159,7 +154,7 @@ func Plugin() sdk.Plugin {
 			Name:  "filter",
 			Spec:  filterSpec,
 			ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
-				config := new(Config)
+				config := new(FilterConfig)
 				if err := parse(config); err != nil {
 					return nil, err
 				}

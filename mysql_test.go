@@ -15,12 +15,12 @@ func TestBuildInsert(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name: "default is insert-ignore, single row",
+			name: "default is plain insert, single row",
 			mode: "", rowCount: 1,
-			want: "INSERT IGNORE INTO t (a, b) VALUES (?, ?)",
+			want: "INSERT INTO t (a, b) VALUES (?, ?)",
 		},
 		{
-			name: "multi-row",
+			name: "insert-ignore, multi-row",
 			mode: "insert-ignore", rowCount: 3,
 			want: "INSERT IGNORE INTO t (a, b) VALUES (?, ?), (?, ?), (?, ?)",
 		},
@@ -65,57 +65,74 @@ func TestBuildInsert(t *testing.T) {
 	}
 }
 
-func TestBuildExists(t *testing.T) {
+func TestBindNamed(t *testing.T) {
 	cases := []struct {
 		name      string
-		fields    []string
-		filterSQL string
+		query     string
 		want      string
-		wantErr   bool
+		wantNames []string
 	}{
 		{
-			name:   "single field",
-			fields: []string{"id"},
-			want:   "SELECT EXISTS(SELECT 1 FROM t WHERE id=?)",
+			name:      "no placeholders",
+			query:     "SELECT 1",
+			want:      "SELECT 1",
+			wantNames: nil,
 		},
 		{
-			name:   "multiple fields ANDed",
-			fields: []string{"src", "key"},
-			want:   "SELECT EXISTS(SELECT 1 FROM t WHERE src=? AND key=?)",
+			name:      "single placeholder",
+			query:     "SELECT EXISTS(SELECT 1 FROM orders WHERE order_id = :order_id)",
+			want:      "SELECT EXISTS(SELECT 1 FROM orders WHERE order_id = ?)",
+			wantNames: []string{"order_id"},
 		},
 		{
-			name:      "field plus filter clause",
-			fields:    []string{"src"},
-			filterSQL: "scanned_at > NOW() - INTERVAL 1 HOUR",
-			want:      "SELECT EXISTS(SELECT 1 FROM t WHERE src=? AND (scanned_at > NOW() - INTERVAL 1 HOUR))",
+			name:      "multiple placeholders in order",
+			query:     "SELECT :a + :b",
+			want:      "SELECT ? + ?",
+			wantNames: []string{"a", "b"},
 		},
 		{
-			name:      "filter clause only",
-			filterSQL: "created_at > NOW() - INTERVAL 1 DAY",
-			want:      "SELECT EXISTS(SELECT 1 FROM t WHERE (created_at > NOW() - INTERVAL 1 DAY))",
+			name:      "colon inside a string literal is left alone",
+			query:     "SELECT :src WHERE t = '12:00'",
+			want:      "SELECT ? WHERE t = '12:00'",
+			wantNames: []string{"src"},
 		},
 		{
-			name:    "nothing to match errors",
-			wantErr: true,
+			name:      "lone colon is literal",
+			query:     "SELECT 1::2",
+			want:      "SELECT 1::2",
+			wantNames: nil,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildExists("t", c.fields, c.filterSQL)
-			if c.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got %q", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			got, names := bindNamed(c.query)
 			if got != c.want {
-				t.Fatalf("buildExists =\n  %q\nwant\n  %q", got, c.want)
+				t.Fatalf("bindNamed query =\n  %q\nwant\n  %q", got, c.want)
+			}
+			if !reflect.DeepEqual(names, c.wantNames) {
+				t.Fatalf("bindNamed names = %v, want %v", names, c.wantNames)
 			}
 		})
+	}
+}
+
+func TestScalarString(t *testing.T) {
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{nil, ""},
+		{[]byte("1"), "1"},
+		{"present", "present"},
+		{int64(0), "0"},
+		{int64(42), "42"},
+		{true, "true"},
+	}
+	for _, c := range cases {
+		if got := scalarString(c.in); got != c.want {
+			t.Fatalf("scalarString(%#v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
@@ -212,13 +229,13 @@ func TestBatchedFlush(t *testing.T) {
 	if len(rec.queries) != 2 {
 		t.Fatalf("expected 2 statements, got %d: %v", len(rec.queries), rec.queries)
 	}
-	if want := "INSERT IGNORE INTO t (a, b) VALUES (?, ?), (?, ?)"; rec.queries[0] != want {
+	if want := "INSERT INTO t (a, b) VALUES (?, ?), (?, ?)"; rec.queries[0] != want {
 		t.Fatalf("first query = %q, want %q", rec.queries[0], want)
 	}
 	if want := []any{1, 2, 3, 4}; !reflect.DeepEqual(rec.args[0], want) {
 		t.Fatalf("first args = %v, want %v", rec.args[0], want)
 	}
-	if want := "INSERT IGNORE INTO t (a, b) VALUES (?, ?)"; rec.queries[1] != want {
+	if want := "INSERT INTO t (a, b) VALUES (?, ?)"; rec.queries[1] != want {
 		t.Fatalf("second query = %q, want %q", rec.queries[1], want)
 	}
 	if want := []any{5, 6}; !reflect.DeepEqual(rec.args[1], want) {
