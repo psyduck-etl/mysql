@@ -2,9 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/psyduck-etl/sdk"
@@ -12,83 +9,120 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-func decodeFor(kind string) (func(in []byte) (map[string]interface{}, error), error) {
-	switch kind {
-	case "JSON":
-		return func(in []byte) (map[string]interface{}, error) {
-			v := make(map[string]interface{})
-			err := json.Unmarshal(in, &v)
-			return v, err
-		}, nil
-	default:
-		return nil, fmt.Errorf("no way to decode %s", kind)
-	}
-}
-
-func repeat[T any](r T, count int) []T {
-	ts := make([]T, count)
-	for i := 0; i < count; i++ {
-		ts[i] = r
-	}
-
-	return ts
-}
-
-func pickOrdered(fields []string, kvs map[string]any) []any {
-	picked := make([]any, len(fields))
-	for i, f := range fields {
-		if v, ok := kvs[f]; !ok {
-			picked[i] = nil
-		} else {
-			picked[i] = v
-		}
-	}
-
-	return picked
-}
-
 type Config struct {
 	Connection string   `psy:"connection"`
 	Table      string   `psy:"table"`
 	Fields     []string `psy:"fields"`
 	Encoding   string   `psy:"encoding"`
 
-	InsertChunkSize int `psy:"insert-chunk-size"`
+	// consumer (mysql-table)
+	InsertChunkSize int    `psy:"insert-chunk-size"`
+	WriteMode       string `psy:"write-mode"`
+	Snapshot        bool   `psy:"snapshot"`
+	Truncate        bool   `psy:"truncate"`
+
+	// transformer (mysql-filter)
+	PassWhen  string `psy:"pass-when"`
+	FilterSQL string `psy:"filter-sql"`
 }
 
-var spec = []*sdk.Spec{
-	{
+func openDB(connection string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", connection)
+	if err != nil {
+		return nil, err
+	}
+
+	db.SetConnMaxLifetime(30 * time.Second)
+	return db, nil
+}
+
+var (
+	specConnection = &sdk.Spec{
 		Name:        "connection",
 		Description: "Connection string to a mysql host configured, having a database with the target table",
 		Required:    true,
 		Type:        sdk.TypeString,
-	},
-	{
+	}
+	specTable = &sdk.Spec{
 		Name:        "table",
-		Description: "Table to stick items onto",
+		Description: "Table to interact with",
 		Required:    true,
 		Type:        sdk.TypeString,
-	},
-	{
-		Name:        "fields",
-		Description: "Fields to extract and stick onto the table",
-		Required:    true,
-		Type:        sdk.TypeList,
-		ElemType:    &sdk.Spec{Type: sdk.TypeString},
-	},
-	{
+	}
+	specEncoding = &sdk.Spec{
 		Name:        "encoding",
 		Description: "Encoding that incoming data will be marshaled with. For now, only JSON is supported",
 		Required:    false,
 		Type:        sdk.TypeString,
 		Default:     "JSON",
+	}
+)
+
+var consumeSpec = []*sdk.Spec{
+	specConnection,
+	specTable,
+	specEncoding,
+	{
+		Name:        "fields",
+		Description: "Fields to extract from each record and write onto the table, in column order",
+		Required:    true,
+		Type:        sdk.TypeList,
+		ElemType:    &sdk.Spec{Type: sdk.TypeString},
 	},
 	{
 		Name:        "insert-chunk-size",
-		Description: "Number of items to insert at once, with a single query",
+		Description: "Maximum number of records to write per INSERT statement. Records are buffered and flushed in one multi-row insert, then again on close",
 		Required:    false,
 		Type:        sdk.TypeInt,
 		Default:     1,
+	},
+	{
+		Name:        "write-mode",
+		Description: "How to write rows: insert-ignore (skip key collisions), insert (fail on collision), replace, or upsert (INSERT ... ON DUPLICATE KEY UPDATE)",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "insert-ignore",
+	},
+	{
+		Name:        "snapshot",
+		Description: "Load every record inside a single transaction, committing only on a clean finish. The table never exposes a partial load",
+		Required:    false,
+		Type:        sdk.TypeBool,
+		Default:     false,
+	},
+	{
+		Name:        "truncate",
+		Description: "When snapshot is set, TRUNCATE the table at the start of the transaction so the load fully replaces prior contents",
+		Required:    false,
+		Type:        sdk.TypeBool,
+		Default:     false,
+	},
+}
+
+var filterSpec = []*sdk.Spec{
+	specConnection,
+	specTable,
+	specEncoding,
+	{
+		Name:        "fields",
+		Description: "Record fields matched by equality against columns of the same name to probe for an existing row",
+		Required:    false,
+		Type:        sdk.TypeList,
+		ElemType:    &sdk.Spec{Type: sdk.TypeString},
+	},
+	{
+		Name:        "pass-when",
+		Description: "absent: pass records with no matching row (de-duplication); present: pass only records that have a matching row",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "absent",
+	},
+	{
+		Name:        "filter-sql",
+		Description: "Optional trusted SQL predicate ANDed onto the existence probe, e.g. 'scanned_at > NOW() - INTERVAL 1 HOUR'. Author-supplied config only; never interpolate record data here",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "",
 	},
 }
 
@@ -97,7 +131,7 @@ func Plugin() sdk.Plugin {
 		&sdk.Resource{
 			Kinds: sdk.CONSUMER,
 			Name:  "mysql-table",
-			Spec:  spec,
+			Spec:  consumeSpec,
 			ProvideConsumer: func(parse sdk.Parser) (sdk.Consumer, error) {
 				config := new(Config)
 				if err := parse(config); err != nil {
@@ -109,47 +143,22 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				db, err := sql.Open("mysql", config.Connection)
+				db, err := openDB(config.Connection)
 				if err != nil {
 					return nil, err
 				}
 
-				db.SetConnMaxLifetime(30 * time.Second)
-
-				query := fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)",
-					config.Table, strings.Join(config.Fields, ", "), strings.Join(repeat("?", len(config.Fields)), ", "))
-
-				return func(recv <-chan []byte, errs chan<- error, done chan<- struct{}) {
-					defer close(done)
-					defer close(errs)
-
-					for data := range recv {
-						dataDecoded, err := decode(data)
-						if err != nil {
-							errs <- err
-							return
-						}
-
-						if _, err := db.Exec(query, pickOrdered(config.Fields, dataDecoded)...); err != nil {
-							errs <- err
-							return
-						}
-					}
-				}, nil
+				return consumeInto(db, config, decode), nil
 			},
 		},
 		&sdk.Resource{
 			Kinds: sdk.TRANSFORMER,
 			Name:  "mysql-filter",
-			Spec:  spec,
+			Spec:  filterSpec,
 			ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
 				config := new(Config)
 				if err := parse(config); err != nil {
 					return nil, err
-				}
-
-				if len(config.Fields) != 1 {
-					return nil, fmt.Errorf("TODO exactly 1 filter field supported for now")
 				}
 
 				decode, err := decodeFor(config.Encoding)
@@ -157,38 +166,12 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				db, err := sql.Open("mysql", config.Connection)
+				db, err := openDB(config.Connection)
 				if err != nil {
 					return nil, err
 				}
 
-				db.SetConnMaxLifetime(30 * time.Second)
-				query := fmt.Sprintf("SELECT count(*) FROM %s where %s=?", config.Table, config.Fields[0])
-				return func(in []byte) ([]byte, error) {
-					dataDecoded, err := decode(in)
-					if err != nil {
-						return nil, err
-					}
-
-					rows, err := db.Query(query, dataDecoded[config.Fields[0]])
-					if err != nil {
-						return nil, err
-					}
-
-					defer rows.Close()
-					rows.Next()
-
-					count := -1
-					rows.Scan(&count)
-					switch count {
-					case 1:
-						return nil, nil
-					case 0:
-						return in, nil
-					default:
-						return nil, fmt.Errorf("count(*) scanned as %d, or did not scan if -1", count)
-					}
-				}, nil
+				return filterFor(db, config, decode)
 			},
 		},
 	)
