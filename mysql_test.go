@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -148,6 +149,57 @@ func TestBuildCreateTable(t *testing.T) {
 
 	if _, err := buildCreateTable("t", "   "); err == nil {
 		t.Fatal("expected error for empty schema")
+	}
+}
+
+func TestNormalizeCell(t *testing.T) {
+	cases := []struct {
+		in   any
+		want any
+	}{
+		{[]byte("cats"), "cats"}, // driver []byte -> string, not base64
+		{[]byte(nil), ""},        // empty []byte -> empty string
+		{int64(42), int64(42)},   // numbers pass through
+		{float64(1.5), float64(1.5)},
+		{true, true},
+		{nil, nil},
+	}
+	for _, c := range cases {
+		if got := normalizeCell(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Fatalf("normalizeCell(%#v) = %#v, want %#v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestRecordFromEncode(t *testing.T) {
+	// A scanned row of driver-native cells (mysql hands text back as []byte)
+	// becomes a clean field->value object.
+	columns := []string{"tag", "seen"}
+	cells := []any{[]byte("cats"), int64(7)}
+
+	encode, err := encodeFor("JSON")
+	if err != nil {
+		t.Fatalf("encodeFor: %v", err)
+	}
+
+	data, err := encode(recordFrom(columns, cells))
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	got := make(map[string]any)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// json numbers decode as float64
+	if got["tag"] != "cats" || got["seen"] != float64(7) {
+		t.Fatalf("record = %#v, want tag=cats seen=7", got)
+	}
+}
+
+func TestEncodeForUnknown(t *testing.T) {
+	if _, err := encodeFor("XML"); err == nil {
+		t.Fatal("expected error for unknown encoding")
 	}
 }
 

@@ -30,6 +30,13 @@ type FilterConfig struct {
 	PassWhen   string `psy:"pass-when"`
 }
 
+// QueryConfig configures the mysql.query producer.
+type QueryConfig struct {
+	Connection string `psy:"connection"`
+	Encoding   string `psy:"encoding"`
+	Query      string `psy:"query"`
+}
+
 func openDB(connection string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", connection)
 	if err != nil {
@@ -114,6 +121,17 @@ var filterSpec = []*sdk.Spec{
 	},
 }
 
+var querySpec = []*sdk.Spec{
+	specConnection,
+	specEncoding,
+	{
+		Name:        "query",
+		Description: "SQL query to run once at startup; each result row is emitted as one record with columns mapped to fields. Parameterize via HCL value/env interpolation, not runtime binding. Trusted, author-supplied config",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+}
+
 func Plugin() sdk.Plugin {
 	return sdk.NewInProc("mysql",
 		&sdk.Resource{
@@ -170,6 +188,29 @@ func Plugin() sdk.Plugin {
 				}
 
 				return filterFor(db, config, decode)
+			},
+		},
+		&sdk.Resource{
+			Kinds: sdk.PRODUCER,
+			Name:  "query",
+			Spec:  querySpec,
+			ProvideProducer: func(parse sdk.Parser) (sdk.Producer, error) {
+				config := new(QueryConfig)
+				if err := parse(config); err != nil {
+					return nil, err
+				}
+
+				encode, err := encodeFor(config.Encoding)
+				if err != nil {
+					return nil, err
+				}
+
+				db, err := openDB(config.Connection)
+				if err != nil {
+					return nil, err
+				}
+
+				return produceQuery(db, config, encode), nil
 			},
 		},
 	)

@@ -16,6 +16,9 @@ type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
+// encoder turns a field->value map into a raw record.
+type encoder func(v map[string]any) ([]byte, error)
+
 func decodeFor(kind string) (decoder, error) {
 	switch kind {
 	case "JSON":
@@ -27,6 +30,38 @@ func decodeFor(kind string) (decoder, error) {
 	default:
 		return nil, fmt.Errorf("no way to decode %s", kind)
 	}
+}
+
+func encodeFor(kind string) (encoder, error) {
+	switch kind {
+	case "JSON":
+		return func(v map[string]any) ([]byte, error) {
+			return json.Marshal(v)
+		}, nil
+	default:
+		return nil, fmt.Errorf("no way to encode %s", kind)
+	}
+}
+
+// recordFrom projects a scanned row (columns paired with cells, positionally)
+// into a field->value map, normalizing each cell for encoding.
+func recordFrom(columns []string, cells []any) map[string]any {
+	record := make(map[string]any, len(columns))
+	for i, col := range columns {
+		record[col] = normalizeCell(cells[i])
+	}
+	return record
+}
+
+// normalizeCell renders a driver-native scan result as a JSON-friendly value.
+// The mysql driver hands back many column types as []byte, which
+// encoding/json would base64-encode; surface those as strings instead. Other
+// types (int64, float64, bool, time.Time, nil) already encode cleanly.
+func normalizeCell(v any) any {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return v
 }
 
 func repeat[T any](r T, count int) []T {
