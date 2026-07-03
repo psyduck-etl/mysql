@@ -2,13 +2,15 @@
 
 A [MySQL](https://dev.mysql.com/) plugin for
 [Psyduck](https://github.com/psyduck-etl/sdk), aimed at ingesting snapshots of
-external resources. It exposes two resources:
+external resources. It exposes three resources:
 
 - `mysql.table` — a **consumer** that batch-loads records into a table, and can
   create the table from a schema if it doesn't exist yet;
 - `mysql.filter` — a **transformer** that asks the database a yes/no question
   about each record (does it already exist? is it within some bound?) and
-  passes or drops it accordingly.
+  passes or drops it accordingly;
+- `mysql.query` — a **producer** that runs a query and emits each result row as
+  a record, reading a worklist back out of the database.
 
 Here a **snapshot** is a single record capturing some external resource — a
 user profile, a post — at a point in time. Each captured record is appended as
@@ -192,6 +194,39 @@ transform "mysql.filter" "known-customers" {
 Because the whole query is yours, `pass-when` isn't limited to `0`/`1` — a
 query returning a status column, a count, or any scalar can gate on its exact
 value.
+
+---
+
+## Resource: `mysql.query` (producer)
+
+Runs one SQL query when the pipeline starts and emits each result row as a
+record — columns mapped to a `{column: value}` object. It's the read
+counterpart to `mysql.table`: pull a filtered, ordered worklist back out of the
+database and feed it downstream (into a queue, a lookup, another pipeline).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `connection` | string | *(required)* | DSN |
+| `query` | string | *(required)* | SQL query run once at startup; each result row becomes one record, columns mapped to fields. Parameterize via HCL `value`/`env` interpolation, not runtime binding. **Trusted, author-supplied config** |
+| `encoding` | string | `JSON` | Codec used to encode each emitted row |
+
+Driver-native `[]byte` cells (how MySQL hands back text and blob columns) are
+rendered as strings, so JSON output isn't base64-encoded.
+
+```hcl
+produce "mysql.query" "pending-tags" {
+  connection = "etl:etl@tcp(localhost:3306)/warehouse"
+  query      = <<-SQL
+    SELECT tag FROM tags
+    WHERE searched = 0
+    ORDER BY seen DESC
+    LIMIT 100
+  SQL
+}
+```
+
+Each row emits a record like `{"tag": "cats"}` for the next stage to act on —
+e.g. a queue of tags to go search.
 
 ---
 
