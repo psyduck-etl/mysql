@@ -1,6 +1,8 @@
 module github.com/psyduck-etl/mysql
 
-go 1.22.1
+go 1.24.0
+
+toolchain go1.24.13
 
 require (
 	github.com/go-sql-driver/mysql v1.8.1
