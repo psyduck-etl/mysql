@@ -26,25 +26,11 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 	}
 
 	query, names := bindNamed(config.Query)
-
-	filterOne := func(in []byte) (bool, error) {
-		var args []any
-		if len(names) > 0 {
-			decoded, err := decode(in)
-			if err != nil {
-				return false, err
-			}
-			args = make([]any, len(names))
-			for i, name := range names {
-				args[i] = decoded[name]
-			}
-		}
-
-		var result any
-		if err := db.QueryRow(query, args...).Scan(&result); err != nil {
-			return false, err
-		}
-		return scalarString(result) == config.PassWhen, nil
+	// Reused across records — the transformer runs single-threaded per the
+	// SDK contract, so we don't re-allocate args on every message.
+	var args []any
+	if len(names) > 0 {
+		args = make([]any, len(names))
 	}
 
 	return func(ctx context.Context, in <-chan []byte, out chan<- []byte, errs chan<- error) {
@@ -55,16 +41,37 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 				if !ok {
 					return
 				}
-				pass, err := filterOne(data)
-				if err != nil {
-					select {
-					case errs <- err:
-					case <-ctx.Done():
-						return
+
+				if len(names) > 0 {
+					decoded, err := decode(data)
+					if err != nil {
+						if ctx.Err() == nil {
+							select {
+							case errs <- err:
+							case <-ctx.Done():
+								return
+							}
+						}
+						continue
+					}
+					for i, name := range names {
+						args[i] = decoded[name]
+					}
+				}
+
+				var result any
+				if err := db.QueryRowContext(ctx, query, args...).Scan(&result); err != nil {
+					if ctx.Err() == nil {
+						select {
+						case errs <- err:
+						case <-ctx.Done():
+							return
+						}
 					}
 					continue
 				}
-				if !pass {
+
+				if scalarString(result) != config.PassWhen {
 					continue
 				}
 				select {
