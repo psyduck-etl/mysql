@@ -2,5 +2,5 @@ filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 github.com/go-sql-driver/mysql v1.8.1 h1:LedoTUt/eveggdHS9qUFC1EFSa8bU2+1pZjSRpvNJ1Y=
 github.com/go-sql-driver/mysql v1.8.1/go.mod h1:wEBSXgmK//2ZFJyE+qWnIsVGmvmEKlqwuVSjsCm7DZg=
-github.com/psyduck-etl/sdk v0.5.2 h1:o1Xfmu2cjQG1zz9ec8Snqt7j6W3da1vqAiqJDrvjJ0U=
-github.com/psyduck-etl/sdk v0.5.2/go.mod h1:gwCEsqNNSfP2cWK9zVVirWwYCb/vtOeLXR0eaiJTz3g=
+github.com/psyduck-etl/sdk v0.5.3-0.20260709235217-05c9ad747f44 h1:U9ajxGVnl3EIP8XCqWTSLPWBQRmz0xxp9Q+ZV9+3e3I=
+github.com/psyduck-etl/sdk v0.5.3-0.20260709235217-05c9ad747f44/go.mod h1:gwCEsqNNSfP2cWK9zVVirWwYCb/vtOeLXR0eaiJTz3g=

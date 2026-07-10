@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -10,7 +11,7 @@ import (
 
 // filterFor builds a Transformer that runs one SQL query per record and passes
 // the record through unchanged when the query's scalar result equals PassWhen
-// (compared as text); otherwise it drops the record by returning nil.
+// (compared as text); otherwise the record is dropped (not written to out).
 //
 // The query may reference the incoming record's fields as :name placeholders,
 // which are bound as query parameters — record data is never interpolated into
@@ -26,12 +27,12 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 
 	query, names := bindNamed(config.Query)
 
-	return func(in []byte) ([]byte, error) {
+	filterOne := func(in []byte) (bool, error) {
 		var args []any
 		if len(names) > 0 {
 			decoded, err := decode(in)
 			if err != nil {
-				return nil, err
+				return false, err
 			}
 			args = make([]any, len(names))
 			for i, name := range names {
@@ -41,13 +42,40 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 
 		var result any
 		if err := db.QueryRow(query, args...).Scan(&result); err != nil {
-			return nil, err
+			return false, err
 		}
+		return scalarString(result) == config.PassWhen, nil
+	}
 
-		if scalarString(result) == config.PassWhen {
-			return in, nil
+	return func(ctx context.Context, in <-chan []byte, out chan<- []byte, errs chan<- error) {
+		defer close(out)
+		for {
+			select {
+			case data, ok := <-in:
+				if !ok {
+					return
+				}
+				pass, err := filterOne(data)
+				if err != nil {
+					select {
+					case errs <- err:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				if !pass {
+					continue
+				}
+				select {
+				case out <- data:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
-		return nil, nil
 	}, nil
 }
 
