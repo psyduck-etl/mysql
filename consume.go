@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/psyduck-etl/sdk"
@@ -12,13 +13,17 @@ import (
 // Each record is a point-in-time capture of some external resource, appended
 // as its own row: re-ingesting the same entity later simply adds another row
 // representing it at that later moment.
+//
+// The Consumer honors ctx: SQL calls use the context, and errors seen while
+// ctx is already cancelled are swallowed — the pipeline is winding down and
+// the driver's "context canceled" is not what the operator wants to see.
 func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 	chunk := config.InsertChunkSize
 	if chunk < 1 {
 		chunk = 1
 	}
 
-	return func(recv <-chan []byte, errs chan<- error, done chan<- struct{}) {
+	return func(ctx context.Context, recv <-chan []byte, errs chan<- error, done chan<- struct{}) {
 		defer close(done)
 		defer close(errs)
 
@@ -35,7 +40,7 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 			for _, row := range batch {
 				args = append(args, row...)
 			}
-			_, err = db.Exec(query, args...)
+			_, err = db.ExecContext(ctx, query, args...)
 			batch = batch[:0]
 			return err
 		}
@@ -43,20 +48,24 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 		for data := range recv {
 			decoded, err := decode(data)
 			if err != nil {
-				errs <- err
+				if ctx.Err() == nil {
+					errs <- err
+				}
 				return
 			}
 
 			batch = append(batch, pickOrdered(config.Fields, decoded))
 			if len(batch) >= chunk {
 				if err := flush(); err != nil {
-					errs <- err
+					if ctx.Err() == nil {
+						errs <- err
+					}
 					return
 				}
 			}
 		}
 
-		if err := flush(); err != nil {
+		if err := flush(); err != nil && ctx.Err() == nil {
 			errs <- err
 		}
 	}
