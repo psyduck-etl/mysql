@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -10,7 +11,7 @@ import (
 
 // filterFor builds a Transformer that runs one SQL query per record and passes
 // the record through unchanged when the query's scalar result equals PassWhen
-// (compared as text); otherwise it drops the record by returning nil.
+// (compared as text); otherwise the record is dropped (not written to out).
 //
 // The query may reference the incoming record's fields as :name placeholders,
 // which are bound as query parameters — record data is never interpolated into
@@ -25,29 +26,63 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 	}
 
 	query, names := bindNamed(config.Query)
+	// Reused across records — the transformer runs single-threaded per the
+	// SDK contract, so we don't re-allocate args on every message.
+	var args []any
+	if len(names) > 0 {
+		args = make([]any, len(names))
+	}
 
-	return func(in []byte) ([]byte, error) {
-		var args []any
-		if len(names) > 0 {
-			decoded, err := decode(in)
-			if err != nil {
-				return nil, err
+	return func(ctx context.Context, in <-chan []byte, out chan<- []byte, errs chan<- error) {
+		defer close(out)
+		for {
+			select {
+			case data, ok := <-in:
+				if !ok {
+					return
+				}
+
+				if len(names) > 0 {
+					decoded, err := decode(data)
+					if err != nil {
+						if ctx.Err() == nil {
+							select {
+							case errs <- err:
+							case <-ctx.Done():
+								return
+							}
+						}
+						continue
+					}
+					for i, name := range names {
+						args[i] = decoded[name]
+					}
+				}
+
+				var result any
+				if err := db.QueryRowContext(ctx, query, args...).Scan(&result); err != nil {
+					if ctx.Err() == nil {
+						select {
+						case errs <- err:
+						case <-ctx.Done():
+							return
+						}
+					}
+					continue
+				}
+
+				if scalarString(result) != config.PassWhen {
+					continue
+				}
+				select {
+				case out <- data:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
 			}
-			args = make([]any, len(names))
-			for i, name := range names {
-				args[i] = decoded[name]
-			}
 		}
-
-		var result any
-		if err := db.QueryRow(query, args...).Scan(&result); err != nil {
-			return nil, err
-		}
-
-		if scalarString(result) == config.PassWhen {
-			return in, nil
-		}
-		return nil, nil
 	}, nil
 }
 
