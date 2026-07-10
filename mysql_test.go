@@ -3,9 +3,37 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"os"
 	"reflect"
 	"testing"
+
+	"github.com/psyduck-etl/sdk"
 )
+
+// TestMain registers a tiny JSON codec factory so mysql tests run without
+// a host binary. In production the psyduck host registers the real stdlib
+// codec chain; here we just need "json" to work end-to-end for the
+// helpers-level tests. Anything else returns an error so the
+// unknown-encoding test still passes.
+func TestMain(m *testing.M) {
+	sdk.RegisterCodecs(func(spec string) (sdk.Codec, error) {
+		if spec != "json" {
+			return nil, fmt.Errorf("test codec factory: unknown spec %q", spec)
+		}
+		return jsonCodec{}, nil
+	})
+	os.Exit(m.Run())
+}
+
+type jsonCodec struct{}
+
+func (jsonCodec) Decode(b []byte) (any, error) {
+	var v any
+	err := json.Unmarshal(b, &v)
+	return v, err
+}
+func (jsonCodec) Encode(v any) ([]byte, error) { return json.Marshal(v) }
 
 func TestBuildInsert(t *testing.T) {
 	cases := []struct {

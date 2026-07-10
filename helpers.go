@@ -2,9 +2,10 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/psyduck-etl/sdk"
 )
 
 // decoder turns a raw record into a field->value map.
@@ -19,28 +20,44 @@ type execer interface {
 // encoder turns a field->value map into a raw record.
 type encoder func(v map[string]any) ([]byte, error)
 
+// codecFor resolves an encoding spec via the sdk-registered codec factory.
+// The host binary (psyduck) installs a factory at startup; standalone
+// tests register a stub in TestMain. Spec strings are normalized to
+// lowercase so config values like "JSON" (the historical default) keep
+// working against the stdlib's lowercase codec names.
+func codecFor(spec string) (sdk.Codec, error) {
+	return sdk.GetCodec(strings.ToLower(spec))
+}
+
+// decodeFor returns a decoder that produces the field->value map shape
+// mysql wants. The underlying codec may hand back any native shape; a
+// non-object decode is a caller error.
 func decodeFor(kind string) (decoder, error) {
-	switch kind {
-	case "JSON":
-		return func(in []byte) (map[string]any, error) {
-			v := make(map[string]any)
-			err := json.Unmarshal(in, &v)
-			return v, err
-		}, nil
-	default:
-		return nil, fmt.Errorf("no way to decode %s", kind)
+	c, err := codecFor(kind)
+	if err != nil {
+		return nil, err
 	}
+	return func(in []byte) (map[string]any, error) {
+		v, err := c.Decode(in)
+		if err != nil {
+			return nil, err
+		}
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("decode %s: want object, got %T", kind, v)
+		}
+		return m, nil
+	}, nil
 }
 
 func encodeFor(kind string) (encoder, error) {
-	switch kind {
-	case "JSON":
-		return func(v map[string]any) ([]byte, error) {
-			return json.Marshal(v)
-		}, nil
-	default:
-		return nil, fmt.Errorf("no way to encode %s", kind)
+	c, err := codecFor(kind)
+	if err != nil {
+		return nil, err
 	}
+	return func(v map[string]any) ([]byte, error) {
+		return c.Encode(v)
+	}, nil
 }
 
 // recordFrom projects a scanned row (columns paired with cells, positionally)

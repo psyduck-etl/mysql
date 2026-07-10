@@ -62,10 +62,10 @@ var (
 	}
 	specEncoding = &sdk.Spec{
 		Name:        "encoding",
-		Description: "Encoding that incoming data will be marshaled with. For now, only JSON is supported",
+		Description: "Codec spec used to (un)marshal record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "JSON",
+		Default:     "json",
 	}
 )
 

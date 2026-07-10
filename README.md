@@ -66,9 +66,15 @@ transform chain into several consumers.
 ### Record shape
 
 Records flow between movers as bytes. `mysql.table` and `mysql.filter` decode
-each record with the `encoding` codec (only `JSON` today) into a field→value
-map, then use `fields` to pick columns by name. A JSON producer upstream
-should therefore emit objects like `{"order_id": 7, "customer": "acme"}`.
+each record with the `encoding` codec into a field→value map, then use
+`fields` to pick columns by name. A JSON producer upstream should therefore
+emit objects like `{"order_id": 7, "customer": "acme"}`.
+
+The `encoding` value is a codec spec resolved by whichever factory the host
+binary registered at startup. Under psyduck, that's the stdlib's chain
+resolver, so `"json"`, `"csv"`, and chains like `"gzip|json"` all work; a
+different host could register any factory that satisfies `sdk.CodecFactory`.
+Values are case-insensitive, so a legacy `"JSON"` still resolves.
 
 ---
 
@@ -81,7 +87,7 @@ Batch-loads decoded records into a table.
 | `connection` | string | *(required)* | DSN, e.g. `user:pass@tcp(host:3306)/db` |
 | `table` | string | *(required)* | Destination table |
 | `fields` | list(string) | *(required)* | Columns to write, in order; picked from each record by name |
-| `encoding` | string | `JSON` | Record codec (only `JSON` today) |
+| `encoding` | string | `json` | Codec spec resolved via the host's registered factory (psyduck: `json`, `csv`, chains like `gzip\|json`) |
 | `insert-chunk-size` | int | `1` | Rows buffered per `INSERT`. Records accumulate and flush as one multi-row statement per chunk, and again on close |
 | `write-mode` | string | `insert` | `insert` (fail on a unique-key collision), `insert-ignore` (silently skip collisions), `replace`, or `upsert` (`INSERT … ON DUPLICATE KEY UPDATE`) |
 | `schema` | string | `""` | Column/constraint definitions. When set, the plugin runs `CREATE TABLE IF NOT EXISTS <table> (<schema>)` before consuming. **Trusted, author-supplied config only** |
@@ -143,7 +149,7 @@ gates, and anything else you can express in SQL.
 | `connection` | string | *(required)* | DSN |
 | `query` | string | *(required)* | SQL query returning a single scalar. Reference record fields as `:name` placeholders — they are bound as parameters, never interpolated. **Trusted, author-supplied config** |
 | `pass-when` | string | `1` | The record passes when the query's scalar result equals this value (as text); otherwise it is dropped |
-| `encoding` | string | `JSON` | Record codec used to resolve `:name` placeholders |
+| `encoding` | string | `json` | Codec spec used to decode the incoming record before binding `:name` placeholders |
 
 Record fields are referenced as `:name` and bound safely as query parameters —
 the record's *values* never touch the SQL text, only the query you write does.
@@ -208,7 +214,7 @@ database and feed it downstream (into a queue, a lookup, another pipeline).
 |-------|------|---------|-------------|
 | `connection` | string | *(required)* | DSN |
 | `query` | string | *(required)* | SQL query run once at startup; each result row becomes one record, columns mapped to fields. Parameterize via HCL `value`/`env` interpolation, not runtime binding. **Trusted, author-supplied config** |
-| `encoding` | string | `JSON` | Codec used to encode each emitted row |
+| `encoding` | string | `json` | Codec spec used to encode each emitted row |
 
 Driver-native `[]byte` cells (how MySQL hands back text and blob columns) are
 rendered as strings, so JSON output isn't base64-encoded.
