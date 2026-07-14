@@ -26,7 +26,7 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 
 	query, names := bindNamed(config.Query)
 
-	return func(in []byte) ([]byte, error) {
+	return sdk.Map(func(in []byte) ([]byte, error) {
 		var args []any
 		if len(names) > 0 {
 			decoded, err := decode(in)
@@ -48,7 +48,7 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 			return in, nil
 		}
 		return nil, nil
-	}, nil
+	}), nil
 }
 
 // bindNamed rewrites :name placeholders into positional ? markers, returning
