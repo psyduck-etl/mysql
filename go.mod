@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/go-sql-driver/mysql v1.8.1
-	github.com/psyduck-etl/sdk v0.5.3-0.20260714064906-ad34ade18836
+	github.com/psyduck-etl/sdk v0.6.0
 )
 
 require (
