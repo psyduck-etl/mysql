@@ -33,6 +33,7 @@ type FilterConfig struct {
 	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
 	PassWhen   string `psy:"pass-when"`
+	groupingConfig
 }
 
 // QueryConfig configures the mysql.query producer.
@@ -124,6 +125,12 @@ var filterSpec = []*sdk.Spec{
 		Type:        sdk.TypeString,
 		Default:     "1",
 	},
+}
+
+func init() {
+	// Append grouping specs to filterSpec at runtime so we can reference
+	// groupingSpec() without circular dependencies.
+	filterSpec = append(filterSpec, groupingSpec()...)
 }
 
 var querySpec = []*sdk.Spec{

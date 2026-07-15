@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/psyduck-etl/sdk"
 )
@@ -19,6 +21,10 @@ import (
 //
 //	query     = "SELECT EXISTS(SELECT 1 FROM orders WHERE order_id = :order_id)"
 //	pass-when = "0"   # keep only orders not already stored
+//
+// If a grouping fragment is configured (group-n or group-time), filterFor
+// returns a batched transformer with double-buffered async flushing. Otherwise,
+// it returns an unbatched sdk.Map transformer.
 func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transformer, error) {
 	if strings.TrimSpace(config.Query) == "" {
 		return nil, fmt.Errorf("mysql.filter requires a query")
@@ -26,29 +32,195 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 
 	query, names := bindNamed(config.Query)
 
-	return sdk.Map(func(in []byte) ([]byte, error) {
-		var args []any
-		if len(names) > 0 {
-			decoded, err := decode(in)
-			if err != nil {
+	// If no grouping is configured, return the fast unbatched path.
+	strategy, err := config.groupingConfig.bind()
+	if err != nil {
+		return nil, err
+	}
+	if strategy == nil {
+		return sdk.Map(func(in []byte) ([]byte, error) {
+			var args []any
+			if len(names) > 0 {
+				decoded, err := decode(in)
+				if err != nil {
+					return nil, err
+				}
+				args = make([]any, len(names))
+				for i, name := range names {
+					args[i] = decoded[name]
+				}
+			}
+
+			var result any
+			if err := db.QueryRow(query, args...).Scan(&result); err != nil {
 				return nil, err
 			}
-			args = make([]any, len(names))
-			for i, name := range names {
-				args[i] = decoded[name]
+
+			if scalarString(result) == config.PassWhen {
+				return in, nil
+			}
+			return nil, nil
+		}), nil
+	}
+
+	// Batched path with double-buffered async flushing.
+	return func(ctx context.Context, in <-chan []byte, out chan<- []byte, errs chan<- error) {
+		defer close(out)
+
+		// bufferChan holds filled buffers for the worker to process.
+		// Capacity 1 ensures double-buffering: main loop fills buffer B
+		// while worker processes buffer A.
+		bufferChan := make(chan [][]byte, 1)
+
+		// workerDone signals when the worker goroutine has exited.
+		workerDone := make(chan struct{})
+
+		// Worker goroutine: processes filled buffers and forwards passing
+		// records to out. On ctx cancel, exits immediately without draining.
+		go func() {
+			defer close(workerDone)
+			for buffer := range bufferChan {
+				for _, msg := range buffer {
+					var args []any
+					if len(names) > 0 {
+						decoded, err := decode(msg)
+						if err != nil {
+							select {
+							case errs <- err:
+							case <-ctx.Done():
+								return
+							}
+							continue
+						}
+						args = make([]any, len(names))
+						for i, name := range names {
+							args[i] = decoded[name]
+						}
+					}
+
+					var result any
+					if err := db.QueryRow(query, args...).Scan(&result); err != nil {
+						select {
+						case errs <- err:
+						case <-ctx.Done():
+							return
+						}
+						continue
+					}
+
+					if scalarString(result) == config.PassWhen {
+						select {
+						case out <- msg:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}
+		}()
+
+		// Main loop: accumulates messages into a buffer and flushes according
+		// to the strategy.
+		var buffer [][]byte
+		var timer *time.Timer
+		var timerChan <-chan time.Time
+		defer func() {
+			if timer != nil {
+				timer.Stop()
+			}
+		}()
+
+		for {
+			select {
+			case msg, ok := <-in:
+				if !ok {
+					// Upstream closed. Flush any remaining buffer.
+					if len(buffer) > 0 {
+						select {
+						case bufferChan <- buffer:
+						case <-ctx.Done():
+						}
+					}
+					close(bufferChan)
+					<-workerDone
+					return
+				}
+
+				now := time.Now()
+
+				// For time-based flushing, initialize the timer on first message.
+				if t, ok := strategy.(*timeFlusher); ok && !t.hasBaseline {
+					t.reset(now)
+					timer = time.NewTimer(t.window)
+					timerChan = timer.C
+				}
+
+				buffer = append(buffer, msg)
+
+				// Check if we should flush based on the strategy.
+				shouldFlush := strategy.shouldFlush(msg, now, len(buffer))
+
+				if shouldFlush {
+					// Flush the buffer via the worker.
+					select {
+					case bufferChan <- buffer:
+						buffer = make([][]byte, 0)
+						if t, ok := strategy.(*timeFlusher); ok {
+							t.reset(time.Now())
+							if timer != nil {
+								timer.Stop()
+							}
+							timer = time.NewTimer(t.window)
+							timerChan = timer.C
+						} else {
+							strategy.reset(time.Now())
+						}
+					case <-ctx.Done():
+						close(bufferChan)
+						<-workerDone
+						return
+					}
+				}
+
+			case <-timerChan:
+				// Time window has closed. Flush the buffer.
+				if len(buffer) > 0 {
+					select {
+					case bufferChan <- buffer:
+						buffer = make([][]byte, 0)
+						if t, ok := strategy.(*timeFlusher); ok {
+							t.reset(time.Now())
+							if timer != nil {
+								timer.Stop()
+							}
+							timer = time.NewTimer(t.window)
+							timerChan = timer.C
+						}
+					case <-ctx.Done():
+						close(bufferChan)
+						<-workerDone
+						return
+					}
+				} else {
+					// Empty buffer but timer fired; restart the timer
+					// for the next window.
+					if t, ok := strategy.(*timeFlusher); ok {
+						if timer != nil {
+							timer.Stop()
+						}
+						timer = time.NewTimer(t.window)
+						timerChan = timer.C
+					}
+				}
+
+			case <-ctx.Done():
+				// Context cancelled. Exit without flushing any remaining buffer.
+				close(bufferChan)
+				<-workerDone
+				return
 			}
 		}
-
-		var result any
-		if err := db.QueryRow(query, args...).Scan(&result); err != nil {
-			return nil, err
-		}
-
-		if scalarString(result) == config.PassWhen {
-			return in, nil
-		}
-		return nil, nil
-	}), nil
+	}, nil
 }
 
 // bindNamed rewrites :name placeholders into positional ? markers, returning

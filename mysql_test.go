@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/psyduck-etl/sdk"
 )
@@ -320,5 +321,166 @@ func TestBatchedFlush(t *testing.T) {
 	}
 	if want := []any{5, 6}; !reflect.DeepEqual(rec.args[1], want) {
 		t.Fatalf("second args = %v, want %v", rec.args[1], want)
+	}
+}
+
+// Tests for grouping configuration and duration parsing
+
+func TestParseDuration(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"500ms", 500 * time.Millisecond, false},
+		{"5s", 5 * time.Second, false},
+		{"1m", 1 * time.Minute, false},
+		{"2h", 2 * time.Hour, false},
+		{"0ms", 0, true},     // zero not allowed
+		{"-1s", 0, true},     // negative not allowed
+		{"abc", 0, true},     // invalid number
+		{"5", 0, true},       // no unit
+		{"5x", 0, true},      // invalid unit
+		{"", 0, true},        // empty
+		{"1ns", 0, true},     // unsupported unit
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%q", c.input), func(t *testing.T) {
+			got, err := parseDuration(c.input)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got %v", c.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", c.input, err)
+			}
+			if got != c.want {
+				t.Fatalf("parseDuration(%q) = %v, want %v", c.input, got, c.want)
+			}
+		})
+	}
+}
+
+func TestGroupingConfigValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  *groupingConfig
+		wantErr bool
+	}{
+		{
+			name:    "neither group-n nor group-time set is valid (unbatched)",
+			config:  &groupingConfig{},
+			wantErr: false,
+		},
+		{
+			name: "group-n alone is valid",
+			config: &groupingConfig{
+				GroupN: &struct{ Size int }{Size: 10},
+			},
+			wantErr: false,
+		},
+		{
+			name: "group-time alone is valid",
+			config: &groupingConfig{
+				GroupTime: &struct{ Window string }{Window: "5s"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "both group-n and group-time is an error",
+			config: &groupingConfig{
+				GroupN:    &struct{ Size int }{Size: 10},
+				GroupTime: &struct{ Window string }{Window: "5s"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "group-n with size <= 0 is an error",
+			config: &groupingConfig{
+				GroupN: &struct{ Size int }{Size: 0},
+			},
+			wantErr: true,
+		},
+		{
+			name: "group-time with invalid duration is an error",
+			config: &groupingConfig{
+				GroupTime: &struct{ Window string }{Window: "invalid"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := c.config.bind()
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCountFlusher(t *testing.T) {
+	f := &countFlusher{size: 3}
+
+	// First two messages shouldn't trigger flush
+	if f.shouldFlush([]byte("msg1"), time.Now(), 1) {
+		t.Fatal("expected no flush at buf len 1")
+	}
+	if f.shouldFlush([]byte("msg2"), time.Now(), 2) {
+		t.Fatal("expected no flush at buf len 2")
+	}
+
+	// Third message hits the size threshold
+	if !f.shouldFlush([]byte("msg3"), time.Now(), 3) {
+		t.Fatal("expected flush at buf len 3")
+	}
+
+	// Reset doesn't affect the threshold
+	f.reset(time.Now())
+	if !f.shouldFlush([]byte("msg4"), time.Now(), 3) {
+		t.Fatal("expected flush after reset at buf len 3")
+	}
+}
+
+func TestTimeFlusher(t *testing.T) {
+	f := &timeFlusher{window: 100 * time.Millisecond}
+
+	now := time.Now()
+
+	// First message within window doesn't trigger flush (no baseline yet)
+	if f.shouldFlush([]byte("msg1"), now, 1) {
+		t.Fatal("expected no flush before baseline set")
+	}
+
+	// Set baseline
+	f.reset(now)
+
+	// Message within window shouldn't flush
+	if f.shouldFlush([]byte("msg2"), now.Add(50*time.Millisecond), 2) {
+		t.Fatal("expected no flush within window")
+	}
+
+	// Message after window should flush
+	if !f.shouldFlush([]byte("msg3"), now.Add(150*time.Millisecond), 3) {
+		t.Fatal("expected flush after window closes")
+	}
+
+	// After reset, the baseline moves and timing restarts
+	newBaseline := now.Add(150 * time.Millisecond)
+	f.reset(newBaseline)
+
+	// Message just within the new window
+	if f.shouldFlush([]byte("msg4"), newBaseline.Add(50*time.Millisecond), 1) {
+		t.Fatal("expected no flush within new window")
 	}
 }
