@@ -46,6 +46,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/psyduck-etl/sdk v0.6.1-0.20260719205214-ad8e0bf513ad h1:b/fB5Xk6AaDSItbpLLfdmKs4XPqQL1rpLVgKcz5LZtk=
 github.com/psyduck-etl/sdk v0.6.1-0.20260719205214-ad8e0bf513ad/go.mod h1:NdqD30whD731zzGD4CK9beh63nFC63VKsAfkQ9ERZjw=
+github.com/psyduck-etl/sdk v0.6.2-0.20260719224910-e96ab0873a45 h1:Mk3Jm2q4iYPj0SKnIEozyIw/cZSTgi/XyGBv+16PCTU=
+github.com/psyduck-etl/sdk v0.6.2-0.20260719224910-e96ab0873a45/go.mod h1:NdqD30whD731zzGD4CK9beh63nFC63VKsAfkQ9ERZjw=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.7.2 h1:4jaiDzPyXQvSd7D0EjG45355tLlV3VOECpq10pLC+8s=
 github.com/stretchr/testify v1.7.2/go.mod h1:R6va5+xMeoiuVRoj+gSkQ7d3FALtqAAGI1FQKckRals=

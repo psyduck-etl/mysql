@@ -198,7 +198,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.acceptConfig.bind(); err != nil {
+				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -231,7 +231,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.acceptConfig.bind(); err != nil {
+				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -253,7 +253,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.acceptConfig.bind(); err != nil {
+				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -275,7 +275,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.emitConfig.bind(); err != nil {
+				if err := config.emitConfig.Bind(); err != nil {
 					return nil, err
 				}
 
