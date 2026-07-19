@@ -1,40 +1,57 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/psyduck-etl/sdk"
+	"github.com/psyduck-etl/sdk/rpc"
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// main serves the plugin over gRPC to the psyduck host that launched this
+// binary as a subprocess.
+func main() { rpc.Serve(Plugin()) }
 
 // Config configures the mysql.table consumer.
 type Config struct {
 	Connection string   `psy:"connection"`
 	Table      string   `psy:"table"`
 	Fields     []string `psy:"fields"`
-	Encoding   string   `psy:"encoding"`
 
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
 	Schema          string `psy:"schema"`
+	acceptConfig
 }
 
 // FilterConfig configures the mysql.filter transformer.
 type FilterConfig struct {
 	Connection string `psy:"connection"`
-	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
 	PassWhen   string `psy:"pass-when"`
+	acceptConfig
+	groupingConfig
+}
+
+// BulkDedupConfig configures the mysql.bulk-dedup transformer.
+type BulkDedupConfig struct {
+	Connection  string `psy:"connection"`
+	Field       string `psy:"field"`
+	Table       string `psy:"table"`
+	TableColumn string `psy:"table-column"`
+	acceptConfig
+	groupingConfig
 }
 
 // QueryConfig configures the mysql.query producer.
 type QueryConfig struct {
 	Connection string `psy:"connection"`
-	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
+	emitConfig
 }
 
 func openDB(connection string) (*sql.DB, error) {
@@ -60,9 +77,16 @@ var (
 		Required:    true,
 		Type:        sdk.TypeString,
 	}
-	specEncoding = &sdk.Spec{
-		Name:        "encoding",
-		Description: "Codec spec used to (un)marshal record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
+	specAccept = &sdk.Spec{
+		Name:        "accept",
+		Description: "Codec spec used to decode record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "json",
+	}
+	specEmit = &sdk.Spec{
+		Name:        "emit",
+		Description: "Codec spec used to encode record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
 		Required:    false,
 		Type:        sdk.TypeString,
 		Default:     "json",
@@ -72,7 +96,7 @@ var (
 var consumeSpec = []*sdk.Spec{
 	specConnection,
 	specTable,
-	specEncoding,
+	specAccept,
 	{
 		Name:        "fields",
 		Description: "Fields to extract from each record and write onto the table, in column order",
@@ -105,7 +129,7 @@ var consumeSpec = []*sdk.Spec{
 
 var filterSpec = []*sdk.Spec{
 	specConnection,
-	specEncoding,
+	specAccept,
 	{
 		Name:        "query",
 		Description: "SQL query returning a single scalar value. Reference incoming record fields as :name placeholders — they are bound as parameters, never interpolated into the SQL text. Trusted, author-supplied config",
@@ -121,9 +145,39 @@ var filterSpec = []*sdk.Spec{
 	},
 }
 
+var bulkDedupSpec = []*sdk.Spec{
+	specConnection,
+	specAccept,
+	{
+		Name:        "field",
+		Description: "Field name in each record that holds the value to dedup on",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+	{
+		Name:        "table",
+		Description: "Table to check for seen values",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+	{
+		Name:        "table-column",
+		Description: "Column in the table holding the deduplicated values",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+}
+
+func init() {
+	// Append grouping specs to filterSpec and bulkDedupSpec at runtime so we can reference
+	// groupingSpec() without circular dependencies.
+	filterSpec = append(filterSpec, groupingSpec()...)
+	bulkDedupSpec = append(bulkDedupSpec, groupingSpec()...)
+}
+
 var querySpec = []*sdk.Spec{
 	specConnection,
-	specEncoding,
+	specEmit,
 	{
 		Name:        "query",
 		Description: "SQL query to run once at startup; each result row is emitted as one record with columns mapped to fields. Parameterize via HCL value/env interpolation, not runtime binding. Trusted, author-supplied config",
@@ -138,14 +192,13 @@ func Plugin() sdk.Plugin {
 			Kinds: sdk.CONSUMER,
 			Name:  "table",
 			Spec:  consumeSpec,
-			ProvideConsumer: func(parse sdk.Parser) (sdk.Consumer, error) {
+			ProvideConsumer: func(ctx context.Context, parse sdk.Parser) (sdk.Consumer, error) {
 				config := new(Config)
 				if err := parse(config); err != nil {
 					return nil, err
 				}
 
-				decode, err := decodeFor(config.Encoding)
-				if err != nil {
+				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -159,26 +212,26 @@ func Plugin() sdk.Plugin {
 					if err != nil {
 						return nil, err
 					}
-					if _, err := db.Exec(create); err != nil {
+					// Use ctx to allow schema bootstrap to be cancelled if bind times out.
+					if _, err := db.ExecContext(ctx, create); err != nil {
 						return nil, fmt.Errorf("ensure table %s: %w", config.Table, err)
 					}
 				}
 
-				return consumeInto(db, config, decode), nil
+				return consumeInto(db, config), nil
 			},
 		},
 		&sdk.Resource{
 			Kinds: sdk.TRANSFORMER,
 			Name:  "filter",
 			Spec:  filterSpec,
-			ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
+			ProvideTransformer: func(ctx context.Context, parse sdk.Parser) (sdk.Transformer, error) {
 				config := new(FilterConfig)
 				if err := parse(config); err != nil {
 					return nil, err
 				}
 
-				decode, err := decodeFor(config.Encoding)
-				if err != nil {
+				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -187,21 +240,42 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				return filterFor(db, config, decode)
+				return filterFor(db, config)
+			},
+		},
+		&sdk.Resource{
+			Kinds: sdk.TRANSFORMER,
+			Name:  "bulk-dedup",
+			Spec:  bulkDedupSpec,
+			ProvideTransformer: func(ctx context.Context, parse sdk.Parser) (sdk.Transformer, error) {
+				config := new(BulkDedupConfig)
+				if err := parse(config); err != nil {
+					return nil, err
+				}
+
+				if err := config.acceptConfig.Bind(); err != nil {
+					return nil, err
+				}
+
+				db, err := openDB(config.Connection)
+				if err != nil {
+					return nil, err
+				}
+
+				return bulkDedupFor(db, config)
 			},
 		},
 		&sdk.Resource{
 			Kinds: sdk.PRODUCER,
 			Name:  "query",
 			Spec:  querySpec,
-			ProvideProducer: func(parse sdk.Parser) (sdk.Producer, error) {
+			ProvideProducer: func(ctx context.Context, parse sdk.Parser) (sdk.Producer, error) {
 				config := new(QueryConfig)
 				if err := parse(config); err != nil {
 					return nil, err
 				}
 
-				encode, err := encodeFor(config.Encoding)
-				if err != nil {
+				if err := config.emitConfig.Bind(); err != nil {
 					return nil, err
 				}
 
@@ -210,7 +284,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				return produceQuery(db, config, encode), nil
+				return produceQuery(db, config), nil
 			},
 		},
 	)

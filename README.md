@@ -17,10 +17,12 @@ user profile, a post — at a point in time. Each captured record is appended as
 its own row, so re-capturing the same entity later just adds another row
 representing it at that later moment.
 
-Built against `github.com/psyduck-etl/sdk` **v0.5.0**.
+Built against `github.com/psyduck-etl/sdk` (see `go.mod` for the exact
+version). Runs as a gRPC subprocess (`sdk/rpc`) launched by the host — no
+`-buildmode=plugin`, no toolchain matching required.
 
 ```sh
-go build -buildmode=plugin -o mysql.so .
+go build -o mysql .
 ```
 
 ---
