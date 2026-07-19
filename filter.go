@@ -29,7 +29,7 @@ import (
 // accumulating. See github.com/psyduck-etl/sdk#12 (BatchContext feature) —
 // this pattern will be replaced by an SDK helper in a future release.
 // Otherwise, it returns an unbatched sdk.MapContext transformer.
-func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transformer, error) {
+func filterFor(db *sql.DB, config *FilterConfig) (sdk.Transformer, error) {
 	if strings.TrimSpace(config.Query) == "" {
 		return nil, fmt.Errorf("mysql.filter requires a query")
 	}
@@ -45,9 +45,13 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 		return sdk.MapContext(func(ctx context.Context, in []byte) ([]byte, error) {
 			var args []any
 			if len(names) > 0 {
-				decoded, err := decode(in)
+				v, err := config.Decode(in)
 				if err != nil {
 					return nil, err
+				}
+				decoded, ok := v.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("decode: want object, got %T", v)
 				}
 				args = make([]any, len(names))
 				for i, name := range names {
@@ -87,10 +91,19 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 				for _, msg := range buffer {
 					var args []any
 					if len(names) > 0 {
-						decoded, err := decode(msg)
+						v, err := config.Decode(msg)
 						if err != nil {
 							select {
 							case errs <- err:
+							case <-ctx.Done():
+								return
+							}
+							continue
+						}
+						decoded, ok := v.(map[string]any)
+						if !ok {
+							select {
+							case errs <- fmt.Errorf("decode: want object, got %T", v):
 							case <-ctx.Done():
 								return
 							}

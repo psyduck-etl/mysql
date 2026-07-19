@@ -15,7 +15,7 @@ import (
 // This is the read counterpart to the table consumer: a pipeline can pull a
 // worklist back out of mysql — say a filtered, ordered set of keys to act on
 // next — and feed it downstream (into a queue, a lookup, and so on).
-func produceQuery(db *sql.DB, config *QueryConfig, encode encoder) sdk.Producer {
+func produceQuery(db *sql.DB, config *QueryConfig) sdk.Producer {
 	return func(ctx context.Context, send chan<- []byte, errs chan<- error) {
 		defer close(send)
 		defer close(errs)
@@ -47,7 +47,7 @@ func produceQuery(db *sql.DB, config *QueryConfig, encode encoder) sdk.Producer 
 				return
 			}
 
-			data, err := encode(recordFrom(columns, cells))
+			data, err := config.Encode(recordFrom(columns, cells))
 			if err != nil {
 				errs <- err
 				return

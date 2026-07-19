@@ -21,37 +21,37 @@ type Config struct {
 	Connection string   `psy:"connection"`
 	Table      string   `psy:"table"`
 	Fields     []string `psy:"fields"`
-	Encoding   string   `psy:"encoding"`
 
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
 	Schema          string `psy:"schema"`
+	acceptConfig
 }
 
 // FilterConfig configures the mysql.filter transformer.
 type FilterConfig struct {
 	Connection string `psy:"connection"`
-	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
 	PassWhen   string `psy:"pass-when"`
+	acceptConfig
 	groupingConfig
 }
 
 // BulkDedupConfig configures the mysql.bulk-dedup transformer.
 type BulkDedupConfig struct {
 	Connection  string `psy:"connection"`
-	Encoding    string `psy:"encoding"`
 	Field       string `psy:"field"`
 	Table       string `psy:"table"`
 	TableColumn string `psy:"table-column"`
+	acceptConfig
 	groupingConfig
 }
 
 // QueryConfig configures the mysql.query producer.
 type QueryConfig struct {
 	Connection string `psy:"connection"`
-	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
+	emitConfig
 }
 
 func openDB(connection string) (*sql.DB, error) {
@@ -77,9 +77,16 @@ var (
 		Required:    true,
 		Type:        sdk.TypeString,
 	}
-	specEncoding = &sdk.Spec{
-		Name:        "encoding",
-		Description: "Codec spec used to (un)marshal record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
+	specAccept = &sdk.Spec{
+		Name:        "accept",
+		Description: "Codec spec used to decode record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "json",
+	}
+	specEmit = &sdk.Spec{
+		Name:        "emit",
+		Description: "Codec spec used to encode record bytes. Resolved via the host's registered codec factory — psyduck's stdlib accepts names like \"json\" and \"csv\" as well as chains like \"gzip|json\"",
 		Required:    false,
 		Type:        sdk.TypeString,
 		Default:     "json",
@@ -89,7 +96,7 @@ var (
 var consumeSpec = []*sdk.Spec{
 	specConnection,
 	specTable,
-	specEncoding,
+	specAccept,
 	{
 		Name:        "fields",
 		Description: "Fields to extract from each record and write onto the table, in column order",
@@ -122,7 +129,7 @@ var consumeSpec = []*sdk.Spec{
 
 var filterSpec = []*sdk.Spec{
 	specConnection,
-	specEncoding,
+	specAccept,
 	{
 		Name:        "query",
 		Description: "SQL query returning a single scalar value. Reference incoming record fields as :name placeholders — they are bound as parameters, never interpolated into the SQL text. Trusted, author-supplied config",
@@ -140,7 +147,7 @@ var filterSpec = []*sdk.Spec{
 
 var bulkDedupSpec = []*sdk.Spec{
 	specConnection,
-	specEncoding,
+	specAccept,
 	{
 		Name:        "field",
 		Description: "Field name in each record that holds the value to dedup on",
@@ -170,7 +177,7 @@ func init() {
 
 var querySpec = []*sdk.Spec{
 	specConnection,
-	specEncoding,
+	specEmit,
 	{
 		Name:        "query",
 		Description: "SQL query to run once at startup; each result row is emitted as one record with columns mapped to fields. Parameterize via HCL value/env interpolation, not runtime binding. Trusted, author-supplied config",
@@ -191,8 +198,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				decode, err := decodeFor(config.Encoding)
-				if err != nil {
+				if err := config.acceptConfig.bind(); err != nil {
 					return nil, err
 				}
 
@@ -212,7 +218,7 @@ func Plugin() sdk.Plugin {
 					}
 				}
 
-				return consumeInto(db, config, decode), nil
+				return consumeInto(db, config), nil
 			},
 		},
 		&sdk.Resource{
@@ -225,8 +231,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				decode, err := decodeFor(config.Encoding)
-				if err != nil {
+				if err := config.acceptConfig.bind(); err != nil {
 					return nil, err
 				}
 
@@ -235,7 +240,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				return filterFor(db, config, decode)
+				return filterFor(db, config)
 			},
 		},
 		&sdk.Resource{
@@ -248,8 +253,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				decode, err := decodeFor(config.Encoding)
-				if err != nil {
+				if err := config.acceptConfig.bind(); err != nil {
 					return nil, err
 				}
 
@@ -258,7 +262,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				return bulkDedupFor(db, config, decode)
+				return bulkDedupFor(db, config)
 			},
 		},
 		&sdk.Resource{
@@ -271,8 +275,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				encode, err := encodeFor(config.Encoding)
-				if err != nil {
+				if err := config.emitConfig.bind(); err != nil {
 					return nil, err
 				}
 
@@ -281,7 +284,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				return produceQuery(db, config, encode), nil
+				return produceQuery(db, config), nil
 			},
 		},
 	)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/psyduck-etl/sdk"
 )
@@ -17,7 +18,7 @@ import (
 // The Consumer honors ctx: SQL calls use the context, and errors seen while
 // ctx is already cancelled are swallowed — the pipeline is winding down and
 // the driver's "context canceled" is not what the operator wants to see.
-func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
+func consumeInto(db *sql.DB, config *Config) sdk.Consumer {
 	chunk := config.InsertChunkSize
 	if chunk < 1 {
 		chunk = 1
@@ -46,10 +47,17 @@ func consumeInto(db *sql.DB, config *Config, decode decoder) sdk.Consumer {
 		}
 
 		for data := range recv {
-			decoded, err := decode(data)
+			v, err := config.Decode(data)
 			if err != nil {
 				if ctx.Err() == nil {
 					errs <- err
+				}
+				return
+			}
+			decoded, ok := v.(map[string]any)
+			if !ok {
+				if ctx.Err() == nil {
+					errs <- fmt.Errorf("decode: want object, got %T", v)
 				}
 				return
 			}

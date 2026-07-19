@@ -28,7 +28,7 @@ import (
 //   - table: table to check for seen values
 //   - table-column: column in table holding the deduplicated values
 //   - group-n or group-time: batching strategy (required; group-n includes max-query-size)
-func bulkDedupFor(db *sql.DB, config *BulkDedupConfig, decode decoder) (sdk.Transformer, error) {
+func bulkDedupFor(db *sql.DB, config *BulkDedupConfig) (sdk.Transformer, error) {
 	if strings.TrimSpace(config.Field) == "" {
 		return nil, fmt.Errorf("mysql.bulk-dedup requires field")
 	}
@@ -74,10 +74,19 @@ func bulkDedupFor(db *sql.DB, config *BulkDedupConfig, decode decoder) (sdk.Tran
 				records := make([]map[string]any, len(buffer))
 
 				for i, msg := range buffer {
-					decoded, err := decode(msg)
+					v, err := config.Decode(msg)
 					if err != nil {
 						select {
 						case errs <- fmt.Errorf("bulk-dedup decode: %w", err):
+						case <-ctx.Done():
+							return
+						}
+						continue
+					}
+					decoded, ok := v.(map[string]any)
+					if !ok {
+						select {
+						case errs <- fmt.Errorf("bulk-dedup decode: want object, got %T", v):
 						case <-ctx.Done():
 							return
 						}
