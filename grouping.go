@@ -11,13 +11,16 @@ import (
 
 // groupingConfig is an embeddable config fragment that defines batching
 // semantics for transformers. It supports two mutually exclusive strategies:
-// - group-n: flush when buffer holds N items
+// - group-n: flush when buffer holds N items, with optional max-query-size
 // - group-time: flush when a time window closes
 //
 // Either strategy is optional; if neither is set, the transformer runs
 // unbatched. If both are set, bind() returns an error.
 type groupingConfig struct {
-	GroupN    *struct{ Size int } `psy:"group-n"`
+	GroupN    *struct {
+		Size         int `psy:"size"`
+		MaxQuerySize int `psy:"max-query-size"`
+	} `psy:"group-n"`
 	GroupTime *struct{ Window string } `psy:"group-time"`
 }
 
@@ -35,6 +38,13 @@ func groupingSpec() []*sdk.Spec {
 					Description: "number of items to accumulate before flushing",
 					Type:        sdk.TypeInt,
 					Required:    true,
+				},
+				{
+					Name:        "max-query-size",
+					Description: "for transformers that split large buffers into multiple queries, the maximum values per query (e.g., max size of a VALUES clause). Default 10,000. Set to 0 to disable splitting",
+					Type:        sdk.TypeInt,
+					Required:    false,
+					Default:     10000,
 				},
 			},
 		},
@@ -67,7 +77,8 @@ type flusher interface {
 
 // countFlusher flushes when the buffer reaches a target size.
 type countFlusher struct {
-	size int
+	size          int
+	maxQuerySize  int // For query splitting (0 = no splitting)
 }
 
 func (c *countFlusher) shouldFlush(msg []byte, recvTime time.Time, bufLen int) bool {
@@ -75,6 +86,11 @@ func (c *countFlusher) shouldFlush(msg []byte, recvTime time.Time, bufLen int) b
 }
 
 func (c *countFlusher) reset(recvTime time.Time) {}
+
+// MaxQuerySize returns the configured max query size, or 0 if not configured.
+func (c *countFlusher) MaxQuerySize() int {
+	return c.maxQuerySize
+}
 
 // timeFlusher flushes when a message arrives outside the current window.
 type timeFlusher struct {
@@ -113,7 +129,15 @@ func (g *groupingConfig) bind() (flusher, error) {
 		if g.GroupN.Size <= 0 {
 			return nil, fmt.Errorf("mysql.filter group-n: size must be > 0, got %d", g.GroupN.Size)
 		}
-		return &countFlusher{size: g.GroupN.Size}, nil
+		maxQuerySize := g.GroupN.MaxQuerySize
+		if maxQuerySize < 0 {
+			return nil, fmt.Errorf("mysql.filter group-n: max-query-size must be >= 0, got %d", maxQuerySize)
+		}
+		// Default to 10,000 if not specified and maxQuerySize is 0
+		if maxQuerySize == 0 {
+			maxQuerySize = 10000
+		}
+		return &countFlusher{size: g.GroupN.Size, maxQuerySize: maxQuerySize}, nil
 	}
 
 	// tSet is true

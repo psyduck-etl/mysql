@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -377,9 +378,14 @@ func TestGroupingConfigValidation(t *testing.T) {
 		},
 		{
 			name: "group-n alone is valid",
-			config: &groupingConfig{
-				GroupN: &struct{ Size int }{Size: 10},
-			},
+			config: func() *groupingConfig {
+				c := &groupingConfig{}
+				c.GroupN = &struct {
+					Size         int `psy:"size"`
+					MaxQuerySize int `psy:"max-query-size"`
+				}{Size: 10, MaxQuerySize: 5000}
+				return c
+			}(),
 			wantErr: false,
 		},
 		{
@@ -391,17 +397,27 @@ func TestGroupingConfigValidation(t *testing.T) {
 		},
 		{
 			name: "both group-n and group-time is an error",
-			config: &groupingConfig{
-				GroupN:    &struct{ Size int }{Size: 10},
-				GroupTime: &struct{ Window string }{Window: "5s"},
-			},
+			config: func() *groupingConfig {
+				c := &groupingConfig{}
+				c.GroupN = &struct {
+					Size         int `psy:"size"`
+					MaxQuerySize int `psy:"max-query-size"`
+				}{Size: 10, MaxQuerySize: 5000}
+				c.GroupTime = &struct{ Window string }{Window: "5s"}
+				return c
+			}(),
 			wantErr: true,
 		},
 		{
 			name: "group-n with size <= 0 is an error",
-			config: &groupingConfig{
-				GroupN: &struct{ Size int }{Size: 0},
-			},
+			config: func() *groupingConfig {
+				c := &groupingConfig{}
+				c.GroupN = &struct {
+					Size         int `psy:"size"`
+					MaxQuerySize int `psy:"max-query-size"`
+				}{Size: 0, MaxQuerySize: 5000}
+				return c
+			}(),
 			wantErr: true,
 		},
 		{
@@ -482,5 +498,45 @@ func TestTimeFlusher(t *testing.T) {
 	// Message just within the new window
 	if f.shouldFlush([]byte("msg4"), newBaseline.Add(50*time.Millisecond), 1) {
 		t.Fatal("expected no flush within new window")
+	}
+}
+
+// Tests for bulk dedup helpers
+
+func TestBuildValuesClause(t *testing.T) {
+	cases := []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{
+			name:  "single value",
+			count: 1,
+			want:  "VALUES (?)",
+		},
+		{
+			name:  "three values",
+			count: 3,
+			want:  "VALUES (?), (?), (?)",
+		},
+		{
+			name:  "hundred values",
+			count: 100,
+			want:  "VALUES " + strings.Repeat("(?), ", 99) + "(?)",
+		},
+		{
+			name:  "zero values",
+			count: 0,
+			want:  "",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := buildValuesClause(c.count)
+			if got != c.want {
+				t.Fatalf("buildValuesClause(%d) =\n  %q\nwant\n  %q", c.count, got, c.want)
+			}
+		})
 	}
 }

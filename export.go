@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -33,6 +34,16 @@ type FilterConfig struct {
 	Encoding   string `psy:"encoding"`
 	Query      string `psy:"query"`
 	PassWhen   string `psy:"pass-when"`
+	groupingConfig
+}
+
+// BulkDedupConfig configures the mysql.bulk-dedup transformer.
+type BulkDedupConfig struct {
+	Connection  string `psy:"connection"`
+	Encoding    string `psy:"encoding"`
+	Field       string `psy:"field"`
+	Table       string `psy:"table"`
+	TableColumn string `psy:"table-column"`
 	groupingConfig
 }
 
@@ -127,10 +138,34 @@ var filterSpec = []*sdk.Spec{
 	},
 }
 
+var bulkDedupSpec = []*sdk.Spec{
+	specConnection,
+	specEncoding,
+	{
+		Name:        "field",
+		Description: "Field name in each record that holds the value to dedup on",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+	{
+		Name:        "table",
+		Description: "Table to check for seen values",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+	{
+		Name:        "table-column",
+		Description: "Column in the table holding the deduplicated values",
+		Required:    true,
+		Type:        sdk.TypeString,
+	},
+}
+
 func init() {
-	// Append grouping specs to filterSpec at runtime so we can reference
+	// Append grouping specs to filterSpec and bulkDedupSpec at runtime so we can reference
 	// groupingSpec() without circular dependencies.
 	filterSpec = append(filterSpec, groupingSpec()...)
+	bulkDedupSpec = append(bulkDedupSpec, groupingSpec()...)
 }
 
 var querySpec = []*sdk.Spec{
@@ -150,7 +185,7 @@ func Plugin() sdk.Plugin {
 			Kinds: sdk.CONSUMER,
 			Name:  "table",
 			Spec:  consumeSpec,
-			ProvideConsumer: func(parse sdk.Parser) (sdk.Consumer, error) {
+			ProvideConsumer: func(ctx context.Context, parse sdk.Parser) (sdk.Consumer, error) {
 				config := new(Config)
 				if err := parse(config); err != nil {
 					return nil, err
@@ -171,7 +206,8 @@ func Plugin() sdk.Plugin {
 					if err != nil {
 						return nil, err
 					}
-					if _, err := db.Exec(create); err != nil {
+					// Use ctx to allow schema bootstrap to be cancelled if bind times out.
+					if _, err := db.ExecContext(ctx, create); err != nil {
 						return nil, fmt.Errorf("ensure table %s: %w", config.Table, err)
 					}
 				}
@@ -183,7 +219,7 @@ func Plugin() sdk.Plugin {
 			Kinds: sdk.TRANSFORMER,
 			Name:  "filter",
 			Spec:  filterSpec,
-			ProvideTransformer: func(parse sdk.Parser) (sdk.Transformer, error) {
+			ProvideTransformer: func(ctx context.Context, parse sdk.Parser) (sdk.Transformer, error) {
 				config := new(FilterConfig)
 				if err := parse(config); err != nil {
 					return nil, err
@@ -203,10 +239,33 @@ func Plugin() sdk.Plugin {
 			},
 		},
 		&sdk.Resource{
+			Kinds: sdk.TRANSFORMER,
+			Name:  "bulk-dedup",
+			Spec:  bulkDedupSpec,
+			ProvideTransformer: func(ctx context.Context, parse sdk.Parser) (sdk.Transformer, error) {
+				config := new(BulkDedupConfig)
+				if err := parse(config); err != nil {
+					return nil, err
+				}
+
+				decode, err := decodeFor(config.Encoding)
+				if err != nil {
+					return nil, err
+				}
+
+				db, err := openDB(config.Connection)
+				if err != nil {
+					return nil, err
+				}
+
+				return bulkDedupFor(db, config, decode)
+			},
+		},
+		&sdk.Resource{
 			Kinds: sdk.PRODUCER,
 			Name:  "query",
 			Spec:  querySpec,
-			ProvideProducer: func(parse sdk.Parser) (sdk.Producer, error) {
+			ProvideProducer: func(ctx context.Context, parse sdk.Parser) (sdk.Producer, error) {
 				config := new(QueryConfig)
 				if err := parse(config); err != nil {
 					return nil, err

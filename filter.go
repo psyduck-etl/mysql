@@ -23,8 +23,12 @@ import (
 //	pass-when = "0"   # keep only orders not already stored
 //
 // If a grouping fragment is configured (group-n or group-time), filterFor
-// returns a batched transformer with double-buffered async flushing. Otherwise,
-// it returns an unbatched sdk.MapContext transformer.
+// returns a batched transformer with double-buffered async flushing. This
+// hand-rolled approach avoids loading all records into memory; buffers are
+// flushed asynchronously via a worker goroutine while the main loop continues
+// accumulating. See github.com/psyduck-etl/sdk#12 (BatchContext feature) —
+// this pattern will be replaced by an SDK helper in a future release.
+// Otherwise, it returns an unbatched sdk.MapContext transformer.
 func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transformer, error) {
 	if strings.TrimSpace(config.Query) == "" {
 		return nil, fmt.Errorf("mysql.filter requires a query")
