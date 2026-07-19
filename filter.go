@@ -24,7 +24,7 @@ import (
 //
 // If a grouping fragment is configured (group-n or group-time), filterFor
 // returns a batched transformer with double-buffered async flushing. Otherwise,
-// it returns an unbatched sdk.Map transformer.
+// it returns an unbatched sdk.MapContext transformer.
 func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transformer, error) {
 	if strings.TrimSpace(config.Query) == "" {
 		return nil, fmt.Errorf("mysql.filter requires a query")
@@ -38,7 +38,7 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 		return nil, err
 	}
 	if strategy == nil {
-		return sdk.Map(func(in []byte) ([]byte, error) {
+		return sdk.MapContext(func(ctx context.Context, in []byte) ([]byte, error) {
 			var args []any
 			if len(names) > 0 {
 				decoded, err := decode(in)
@@ -52,7 +52,7 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 			}
 
 			var result any
-			if err := db.QueryRow(query, args...).Scan(&result); err != nil {
+			if err := db.QueryRowContext(ctx, query, args...).Scan(&result); err != nil {
 				return nil, err
 			}
 
@@ -99,7 +99,7 @@ func filterFor(db *sql.DB, config *FilterConfig, decode decoder) (sdk.Transforme
 					}
 
 					var result any
-					if err := db.QueryRow(query, args...).Scan(&result); err != nil {
+					if err := db.QueryRowContext(ctx, query, args...).Scan(&result); err != nil {
 						select {
 						case errs <- err:
 						case <-ctx.Done():
