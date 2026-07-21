@@ -24,6 +24,7 @@ type Config struct {
 
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
+	IncrementColumn string `psy:"increment-column"`
 	Schema          string `psy:"schema"`
 	acceptConfig
 }
@@ -113,10 +114,17 @@ var consumeSpec = []*sdk.Spec{
 	},
 	{
 		Name:        "write-mode",
-		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), replace, or upsert (INSERT ... ON DUPLICATE KEY UPDATE)",
+		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), replace, upsert (INSERT ... ON DUPLICATE KEY UPDATE), or increment (INSERT ... ON DUPLICATE KEY UPDATE col = col + 1; requires increment-column)",
 		Required:    false,
 		Type:        sdk.TypeString,
 		Default:     "insert",
+	},
+	{
+		Name:        "increment-column",
+		Description: "Column name to increment on duplicate key collision (used only by write-mode=increment). Defaults to \"n\" if not specified",
+		Required:    false,
+		Type:        sdk.TypeString,
+		Default:     "n",
 	},
 	{
 		Name:        "schema",

@@ -33,7 +33,11 @@ func consumeInto(db *sql.DB, config *Config) sdk.Consumer {
 			if len(batch) == 0 {
 				return nil
 			}
-			query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch))
+			incrementCol := config.IncrementColumn
+			if incrementCol == "" {
+				incrementCol = "n"
+			}
+			query, err := buildInsertWithIncrement(config.WriteMode, config.Table, config.Fields, len(batch), incrementCol)
 			if err != nil {
 				return err
 			}

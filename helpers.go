@@ -129,7 +129,13 @@ func pickOrdered(fields []string, kvs map[string]any) []any {
 // buildInsert renders a single multi-row INSERT statement covering rowCount
 // rows of the given fields, honoring the write mode. The returned statement
 // expects rowCount*len(fields) positional args, row-major.
+// For increment mode, incrementCol specifies which column to increment on duplicate key.
 func buildInsert(mode, table string, fields []string, rowCount int) (string, error) {
+	return buildInsertWithIncrement(mode, table, fields, rowCount, "n")
+}
+
+// buildInsertWithIncrement is like buildInsert but accepts an incrementCol parameter.
+func buildInsertWithIncrement(mode, table string, fields []string, rowCount int, incrementCol string) (string, error) {
 	if len(fields) == 0 {
 		return "", fmt.Errorf("buildInsert: no fields")
 	}
@@ -152,8 +158,11 @@ func buildInsert(mode, table string, fields []string, rowCount int) (string, err
 			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
 		}
 		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
+	case "increment":
+		verb = "INSERT INTO"
+		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", incrementCol, incrementCol)
 	default:
-		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|replace|upsert)", mode)
+		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|replace|upsert|increment)", mode)
 	}
 
 	oneRow := "(" + strings.Join(repeat("?", len(fields)), ", ") + ")"

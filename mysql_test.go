@@ -96,6 +96,40 @@ func TestBuildInsert(t *testing.T) {
 	}
 }
 
+func TestBuildInsertIncrement(t *testing.T) {
+	cases := []struct {
+		name         string
+		rowCount     int
+		incrementCol string
+		want         string
+	}{
+		{
+			name:         "increment with default column name",
+			rowCount:     1,
+			incrementCol: "n",
+			want:         "INSERT INTO t (a, b) VALUES (?, ?) ON DUPLICATE KEY UPDATE n=n+1",
+		},
+		{
+			name:         "increment with custom column name, multi-row",
+			rowCount:     2,
+			incrementCol: "count",
+			want:         "INSERT INTO t (a, b) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE count=count+1",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := buildInsertWithIncrement("increment", "t", []string{"a", "b"}, c.rowCount, c.incrementCol)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.want {
+				t.Fatalf("buildInsertWithIncrement =\n  %q\nwant\n  %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestBindNamed(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -271,7 +305,11 @@ func flushBatches(exec execer, config *Config, records []map[string]any) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch))
+		incrementCol := config.IncrementColumn
+		if incrementCol == "" {
+			incrementCol = "n"
+		}
+		query, err := buildInsertWithIncrement(config.WriteMode, config.Table, config.Fields, len(batch), incrementCol)
 		if err != nil {
 			return err
 		}
