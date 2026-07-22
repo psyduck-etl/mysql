@@ -205,7 +205,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.WriteModeOK(); err != nil {
+				if err := config.writeModeOK(); err != nil {
 					return nil, err
 				}
 

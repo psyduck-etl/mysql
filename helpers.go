@@ -134,11 +134,11 @@ const (
 	WRITE_MODE_INCREMENT     = "increment"
 )
 
-// WriteModeOK validates c.WriteMode against its companion fields, catching
+// writeModeOK validates c.WriteMode against its companion fields, catching
 // mistakes at config-bind time rather than at the first failed insert.
 // Currently this just checks that increment mode has an increment column;
 // future write-mode-specific requirements belong here too.
-func (c *Config) WriteModeOK() error {
+func (c *Config) writeModeOK() error {
 	if c.WriteMode == WRITE_MODE_INCREMENT && c.IncrementColumn == "" {
 		return fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
 	}
