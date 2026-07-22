@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/psyduck-etl/sdk"
@@ -218,7 +219,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if config.Schema != "" {
+				if strings.TrimSpace(config.Schema) != "" {
 					create := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", config.Table, config.Schema)
 					// Use ctx to allow schema bootstrap to be cancelled if bind times out.
 					if _, err := db.ExecContext(ctx, create); err != nil {

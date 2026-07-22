@@ -207,9 +207,6 @@ func TestConfigValidate(t *testing.T) {
 	if err := (&Config{WriteMode: WRITE_MODE_INCREMENT}).validate(); err == nil {
 		t.Fatal("expected error for increment mode without a column")
 	}
-	if err := (&Config{Schema: "   "}).validate(); err == nil {
-		t.Fatal("expected error for blank schema")
-	}
 	if err := (&Config{}).validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

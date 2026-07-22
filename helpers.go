@@ -141,9 +141,6 @@ func (c *Config) validate() error {
 	if c.WriteMode == WRITE_MODE_INCREMENT && c.IncrementColumn == "" {
 		return fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
 	}
-	if c.Schema != "" && strings.TrimSpace(c.Schema) == "" {
-		return fmt.Errorf("mysql.table: schema is blank")
-	}
 	return nil
 }
 
