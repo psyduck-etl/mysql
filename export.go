@@ -205,8 +205,8 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if config.WriteMode == WRITE_MODE_INCREMENT && config.IncrementColumn == "" {
-					return nil, fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
+				if err := config.WriteModeOK(); err != nil {
+					return nil, err
 				}
 
 				if err := config.acceptConfig.Bind(); err != nil {
