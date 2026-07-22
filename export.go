@@ -205,7 +205,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if err := config.writeModeOK(); err != nil {
+				if err := config.validate(); err != nil {
 					return nil, err
 				}
 
@@ -219,10 +219,7 @@ func Plugin() sdk.Plugin {
 				}
 
 				if config.Schema != "" {
-					create, err := buildCreateTable(config.Table, config.Schema)
-					if err != nil {
-						return nil, err
-					}
+					create := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", config.Table, config.Schema)
 					// Use ctx to allow schema bootstrap to be cancelled if bind times out.
 					if _, err := db.ExecContext(ctx, create); err != nil {
 						return nil, fmt.Errorf("ensure table %s: %w", config.Table, err)

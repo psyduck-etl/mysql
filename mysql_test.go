@@ -203,18 +203,15 @@ func TestScalarString(t *testing.T) {
 	}
 }
 
-func TestBuildCreateTable(t *testing.T) {
-	got, err := buildCreateTable("captures", "id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP")
-	if err != nil {
+func TestConfigValidate(t *testing.T) {
+	if err := (&Config{WriteMode: WRITE_MODE_INCREMENT}).validate(); err == nil {
+		t.Fatal("expected error for increment mode without a column")
+	}
+	if err := (&Config{Schema: "   "}).validate(); err == nil {
+		t.Fatal("expected error for blank schema")
+	}
+	if err := (&Config{}).validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	want := "CREATE TABLE IF NOT EXISTS captures (id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP)"
-	if got != want {
-		t.Fatalf("buildCreateTable =\n  %q\nwant\n  %q", got, want)
-	}
-
-	if _, err := buildCreateTable("t", "   "); err == nil {
-		t.Fatal("expected error for empty schema")
 	}
 }
 

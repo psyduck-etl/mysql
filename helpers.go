@@ -134,13 +134,15 @@ const (
 	WRITE_MODE_INCREMENT     = "increment"
 )
 
-// writeModeOK validates c.WriteMode against its companion fields, catching
-// mistakes at config-bind time rather than at the first failed insert.
-// Currently this just checks that increment mode has an increment column;
-// future write-mode-specific requirements belong here too.
-func (c *Config) writeModeOK() error {
+// validate checks Config for mistakes that don't surface until first use
+// (a failed insert, a malformed CREATE TABLE), catching them at config-bind
+// time instead. General-purpose post-parse checks belong here.
+func (c *Config) validate() error {
 	if c.WriteMode == WRITE_MODE_INCREMENT && c.IncrementColumn == "" {
 		return fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
+	}
+	if c.Schema != "" && strings.TrimSpace(c.Schema) == "" {
+		return fmt.Errorf("mysql.table: schema is blank")
 	}
 	return nil
 }
@@ -195,14 +197,4 @@ func (c *Config) buildInsert(rowCount int) (string, error) {
 	rows := strings.Join(repeat(oneRow, rowCount), ", ")
 	return fmt.Sprintf("%s %s (%s) VALUES %s%s",
 		verb, c.Table, strings.Join(c.Fields, ", "), rows, suffix), nil
-}
-
-// buildCreateTable renders a CREATE TABLE IF NOT EXISTS from a trusted,
-// author-supplied column/constraint body (the text that goes inside the
-// parentheses).
-func buildCreateTable(table, schema string) (string, error) {
-	if strings.TrimSpace(schema) == "" {
-		return "", fmt.Errorf("buildCreateTable: empty schema")
-	}
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, schema), nil
 }
