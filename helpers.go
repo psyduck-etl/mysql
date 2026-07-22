@@ -145,11 +145,39 @@ func (c *Config) writeModeOK() error {
 	return nil
 }
 
+// writeModeClauses returns the INSERT verb and ON DUPLICATE KEY UPDATE
+// suffix (empty when none applies) for c.WriteMode. For increment mode,
+// c.IncrementColumn specifies which column to increment on duplicate key
+// and is required; writeModeClauses errors if it's empty, and likewise for
+// any unrecognized write mode.
+func (c *Config) writeModeClauses() (verb, suffix string, err error) {
+	verb = "INSERT INTO"
+	switch c.WriteMode {
+	case "", WRITE_MODE_INSERT:
+		// default: fail loudly on a unique-key collision
+	case WRITE_MODE_INSERT_IGNORE:
+		verb = "INSERT IGNORE INTO"
+	case WRITE_MODE_UPSERT:
+		sets := make([]string, len(c.Fields))
+		for i, f := range c.Fields {
+			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
+		}
+		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
+	case WRITE_MODE_INCREMENT:
+		if c.IncrementColumn == "" {
+			return "", "", fmt.Errorf("buildInsert: write-mode=increment requires a non-empty increment column")
+		}
+		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", c.IncrementColumn, c.IncrementColumn)
+	default:
+		return "", "", fmt.Errorf("unknown write-mode %q (want %s|%s|%s|%s)",
+			c.WriteMode, WRITE_MODE_INSERT_IGNORE, WRITE_MODE_INSERT, WRITE_MODE_UPSERT, WRITE_MODE_INCREMENT)
+	}
+	return verb, suffix, nil
+}
+
 // buildInsert renders a single multi-row INSERT statement covering rowCount
 // rows of c.Fields, honoring c.WriteMode. The returned statement expects
 // rowCount*len(c.Fields) positional args, row-major.
-// For increment mode, c.IncrementColumn specifies which column to increment
-// on duplicate key and is required; buildInsert errors if it's empty.
 func (c *Config) buildInsert(rowCount int) (string, error) {
 	if len(c.Fields) == 0 {
 		return "", fmt.Errorf("buildInsert: no fields")
@@ -158,28 +186,9 @@ func (c *Config) buildInsert(rowCount int) (string, error) {
 		return "", fmt.Errorf("buildInsert: rowCount must be >= 1, got %d", rowCount)
 	}
 
-	verb, suffix := "INSERT INTO", ""
-	switch c.WriteMode {
-	case "", WRITE_MODE_INSERT:
-		// default: fail loudly on a unique-key collision
-	case WRITE_MODE_INSERT_IGNORE:
-		verb = "INSERT IGNORE INTO"
-	case WRITE_MODE_UPSERT:
-		verb = "INSERT INTO"
-		sets := make([]string, len(c.Fields))
-		for i, f := range c.Fields {
-			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
-		}
-		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
-	case WRITE_MODE_INCREMENT:
-		if c.IncrementColumn == "" {
-			return "", fmt.Errorf("buildInsert: write-mode=increment requires a non-empty increment column")
-		}
-		verb = "INSERT INTO"
-		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", c.IncrementColumn, c.IncrementColumn)
-	default:
-		return "", fmt.Errorf("unknown write-mode %q (want %s|%s|%s|%s)",
-			c.WriteMode, WRITE_MODE_INSERT_IGNORE, WRITE_MODE_INSERT, WRITE_MODE_UPSERT, WRITE_MODE_INCREMENT)
+	verb, suffix, err := c.writeModeClauses()
+	if err != nil {
+		return "", err
 	}
 
 	oneRow := "(" + strings.Join(repeat("?", len(c.Fields)), ", ") + ")"
