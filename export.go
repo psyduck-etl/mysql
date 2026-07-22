@@ -117,7 +117,7 @@ var consumeSpec = []*sdk.Spec{
 		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), upsert (INSERT ... ON DUPLICATE KEY UPDATE), or increment (INSERT ... ON DUPLICATE KEY UPDATE col = col + 1; requires increment-column)",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "insert",
+		Default:     WRITE_MODE_INSERT,
 	},
 	{
 		Name:        "increment-column",
@@ -205,7 +205,7 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if config.WriteMode == "increment" && config.IncrementColumn == "" {
+				if config.WriteMode == WRITE_MODE_INCREMENT && config.IncrementColumn == "" {
 					return nil, fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
 				}
 

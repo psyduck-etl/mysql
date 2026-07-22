@@ -52,12 +52,12 @@ func TestBuildInsert(t *testing.T) {
 		},
 		{
 			name: "insert-ignore, multi-row",
-			mode: "insert-ignore", rowCount: 3,
+			mode: WRITE_MODE_INSERT_IGNORE, rowCount: 3,
 			want: "INSERT IGNORE INTO t (a, b) VALUES (?, ?), (?, ?), (?, ?)",
 		},
 		{
 			name: "upsert",
-			mode: "upsert", rowCount: 2,
+			mode: WRITE_MODE_UPSERT, rowCount: 2,
 			want: "INSERT INTO t (a, b) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE a=VALUES(a), b=VALUES(b)",
 		},
 		{
@@ -72,7 +72,7 @@ func TestBuildInsert(t *testing.T) {
 		},
 		{
 			name: "increment mode without a column errors",
-			mode: "increment", rowCount: 1,
+			mode: WRITE_MODE_INCREMENT, rowCount: 1,
 			wantErr: true,
 		},
 	}
@@ -120,7 +120,7 @@ func TestBuildInsertIncrement(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: "increment", IncrementColumn: c.incrementCol}
+			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: WRITE_MODE_INCREMENT, IncrementColumn: c.incrementCol}
 			got, err := cfg.buildInsert(c.rowCount)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

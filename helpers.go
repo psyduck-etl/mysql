@@ -126,6 +126,14 @@ func pickOrdered(fields []string, kvs map[string]any) []any {
 	return picked
 }
 
+// Recognized values for Config.WriteMode.
+const (
+	WRITE_MODE_INSERT        = "insert"
+	WRITE_MODE_INSERT_IGNORE = "insert-ignore"
+	WRITE_MODE_UPSERT        = "upsert"
+	WRITE_MODE_INCREMENT     = "increment"
+)
+
 // buildInsert renders a single multi-row INSERT statement covering rowCount
 // rows of c.Fields, honoring c.WriteMode. The returned statement expects
 // rowCount*len(c.Fields) positional args, row-major.
@@ -141,25 +149,26 @@ func (c *Config) buildInsert(rowCount int) (string, error) {
 
 	verb, suffix := "INSERT INTO", ""
 	switch c.WriteMode {
-	case "", "insert":
+	case "", WRITE_MODE_INSERT:
 		// default: fail loudly on a unique-key collision
-	case "insert-ignore":
+	case WRITE_MODE_INSERT_IGNORE:
 		verb = "INSERT IGNORE INTO"
-	case "upsert":
+	case WRITE_MODE_UPSERT:
 		verb = "INSERT INTO"
 		sets := make([]string, len(c.Fields))
 		for i, f := range c.Fields {
 			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
 		}
 		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
-	case "increment":
+	case WRITE_MODE_INCREMENT:
 		if c.IncrementColumn == "" {
 			return "", fmt.Errorf("buildInsert: write-mode=increment requires a non-empty increment column")
 		}
 		verb = "INSERT INTO"
 		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", c.IncrementColumn, c.IncrementColumn)
 	default:
-		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|upsert|increment)", c.WriteMode)
+		return "", fmt.Errorf("unknown write-mode %q (want %s|%s|%s|%s)",
+			c.WriteMode, WRITE_MODE_INSERT_IGNORE, WRITE_MODE_INSERT, WRITE_MODE_UPSERT, WRITE_MODE_INCREMENT)
 	}
 
 	oneRow := "(" + strings.Join(repeat("?", len(c.Fields)), ", ") + ")"
