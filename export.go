@@ -114,7 +114,7 @@ var consumeSpec = []*sdk.Spec{
 	},
 	{
 		Name:        "write-mode",
-		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), replace, upsert (INSERT ... ON DUPLICATE KEY UPDATE), or increment (INSERT ... ON DUPLICATE KEY UPDATE col = col + 1; requires increment-column)",
+		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), upsert (INSERT ... ON DUPLICATE KEY UPDATE), or increment (INSERT ... ON DUPLICATE KEY UPDATE col = col + 1; requires increment-column)",
 		Required:    false,
 		Type:        sdk.TypeString,
 		Default:     "insert",

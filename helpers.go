@@ -149,8 +149,6 @@ func buildInsertWithIncrement(mode, table string, fields []string, rowCount int,
 		// default: fail loudly on a unique-key collision
 	case "insert-ignore":
 		verb = "INSERT IGNORE INTO"
-	case "replace":
-		verb = "REPLACE INTO"
 	case "upsert":
 		verb = "INSERT INTO"
 		sets := make([]string, len(fields))
@@ -162,7 +160,7 @@ func buildInsertWithIncrement(mode, table string, fields []string, rowCount int,
 		verb = "INSERT INTO"
 		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", incrementCol, incrementCol)
 	default:
-		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|replace|upsert|increment)", mode)
+		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|upsert|increment)", mode)
 	}
 
 	oneRow := "(" + strings.Join(repeat("?", len(fields)), ", ") + ")"

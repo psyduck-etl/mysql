@@ -56,11 +56,6 @@ func TestBuildInsert(t *testing.T) {
 			want: "INSERT IGNORE INTO t (a, b) VALUES (?, ?), (?, ?), (?, ?)",
 		},
 		{
-			name: "replace",
-			mode: "replace", rowCount: 1,
-			want: "REPLACE INTO t (a, b) VALUES (?, ?)",
-		},
-		{
 			name: "upsert",
 			mode: "upsert", rowCount: 2,
 			want: "INSERT INTO t (a, b) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE a=VALUES(a), b=VALUES(b)",
