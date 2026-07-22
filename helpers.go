@@ -127,12 +127,12 @@ func pickOrdered(fields []string, kvs map[string]any) []any {
 }
 
 // buildInsert renders a single multi-row INSERT statement covering rowCount
-// rows of the given fields, honoring the write mode. The returned statement
-// expects rowCount*len(fields) positional args, row-major.
-// For increment mode, incrementCol specifies which column to increment on
-// duplicate key and is required; buildInsert errors if it's empty.
-func buildInsert(mode, table string, fields []string, rowCount int, incrementCol string) (string, error) {
-	if len(fields) == 0 {
+// rows of c.Fields, honoring c.WriteMode. The returned statement expects
+// rowCount*len(c.Fields) positional args, row-major.
+// For increment mode, c.IncrementColumn specifies which column to increment
+// on duplicate key and is required; buildInsert errors if it's empty.
+func (c *Config) buildInsert(rowCount int) (string, error) {
+	if len(c.Fields) == 0 {
 		return "", fmt.Errorf("buildInsert: no fields")
 	}
 	if rowCount < 1 {
@@ -140,32 +140,32 @@ func buildInsert(mode, table string, fields []string, rowCount int, incrementCol
 	}
 
 	verb, suffix := "INSERT INTO", ""
-	switch mode {
+	switch c.WriteMode {
 	case "", "insert":
 		// default: fail loudly on a unique-key collision
 	case "insert-ignore":
 		verb = "INSERT IGNORE INTO"
 	case "upsert":
 		verb = "INSERT INTO"
-		sets := make([]string, len(fields))
-		for i, f := range fields {
+		sets := make([]string, len(c.Fields))
+		for i, f := range c.Fields {
 			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
 		}
 		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
 	case "increment":
-		if incrementCol == "" {
+		if c.IncrementColumn == "" {
 			return "", fmt.Errorf("buildInsert: write-mode=increment requires a non-empty increment column")
 		}
 		verb = "INSERT INTO"
-		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", incrementCol, incrementCol)
+		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", c.IncrementColumn, c.IncrementColumn)
 	default:
-		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|upsert|increment)", mode)
+		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|upsert|increment)", c.WriteMode)
 	}
 
-	oneRow := "(" + strings.Join(repeat("?", len(fields)), ", ") + ")"
+	oneRow := "(" + strings.Join(repeat("?", len(c.Fields)), ", ") + ")"
 	rows := strings.Join(repeat(oneRow, rowCount), ", ")
 	return fmt.Sprintf("%s %s (%s) VALUES %s%s",
-		verb, table, strings.Join(fields, ", "), rows, suffix), nil
+		verb, c.Table, strings.Join(c.Fields, ", "), rows, suffix), nil
 }
 
 // buildCreateTable renders a CREATE TABLE IF NOT EXISTS from a trusted,

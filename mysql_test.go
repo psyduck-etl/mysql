@@ -79,7 +79,8 @@ func TestBuildInsert(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildInsert(c.mode, "t", []string{"a", "b"}, c.rowCount, "")
+			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: c.mode}
+			got, err := cfg.buildInsert(c.rowCount)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %q", got)
@@ -119,7 +120,8 @@ func TestBuildInsertIncrement(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildInsert("increment", "t", []string{"a", "b"}, c.rowCount, c.incrementCol)
+			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: "increment", IncrementColumn: c.incrementCol}
+			got, err := cfg.buildInsert(c.rowCount)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -305,7 +307,7 @@ func flushBatches(exec execer, config *Config, records []map[string]any) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch), config.IncrementColumn)
+		query, err := config.buildInsert(len(batch))
 		if err != nil {
 			return err
 		}
