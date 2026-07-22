@@ -126,48 +126,72 @@ func pickOrdered(fields []string, kvs map[string]any) []any {
 	return picked
 }
 
+// Recognized values for Config.WriteMode.
+const (
+	WRITE_MODE_INSERT        = "insert"
+	WRITE_MODE_INSERT_IGNORE = "insert-ignore"
+	WRITE_MODE_UPSERT        = "upsert"
+	WRITE_MODE_INCREMENT     = "increment"
+)
+
+// validate checks Config for mistakes that don't surface until first use
+// (a failed insert, a malformed CREATE TABLE), catching them at config-bind
+// time instead. General-purpose post-parse checks belong here.
+func (c *Config) validate() error {
+	if c.WriteMode == WRITE_MODE_INCREMENT && c.IncrementColumn == "" {
+		return fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
+	}
+	return nil
+}
+
+// writeModeClauses returns the INSERT verb and ON DUPLICATE KEY UPDATE
+// suffix (empty when none applies) for c.WriteMode. For increment mode,
+// c.IncrementColumn specifies which column to increment on duplicate key
+// and is required; writeModeClauses errors if it's empty, and likewise for
+// any unrecognized write mode.
+func (c *Config) writeModeClauses() (verb, suffix string, err error) {
+	verb = "INSERT INTO"
+	switch c.WriteMode {
+	case "", WRITE_MODE_INSERT:
+		// default: fail loudly on a unique-key collision
+	case WRITE_MODE_INSERT_IGNORE:
+		verb = "INSERT IGNORE INTO"
+	case WRITE_MODE_UPSERT:
+		sets := make([]string, len(c.Fields))
+		for i, f := range c.Fields {
+			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
+		}
+		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
+	case WRITE_MODE_INCREMENT:
+		if c.IncrementColumn == "" {
+			return "", "", fmt.Errorf("buildInsert: write-mode=increment requires a non-empty increment column")
+		}
+		suffix = fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s=%s+1", c.IncrementColumn, c.IncrementColumn)
+	default:
+		return "", "", fmt.Errorf("unknown write-mode %q (want %s|%s|%s|%s)",
+			c.WriteMode, WRITE_MODE_INSERT_IGNORE, WRITE_MODE_INSERT, WRITE_MODE_UPSERT, WRITE_MODE_INCREMENT)
+	}
+	return verb, suffix, nil
+}
+
 // buildInsert renders a single multi-row INSERT statement covering rowCount
-// rows of the given fields, honoring the write mode. The returned statement
-// expects rowCount*len(fields) positional args, row-major.
-func buildInsert(mode, table string, fields []string, rowCount int) (string, error) {
-	if len(fields) == 0 {
+// rows of c.Fields, honoring c.WriteMode. The returned statement expects
+// rowCount*len(c.Fields) positional args, row-major.
+func (c *Config) buildInsert(rowCount int) (string, error) {
+	if len(c.Fields) == 0 {
 		return "", fmt.Errorf("buildInsert: no fields")
 	}
 	if rowCount < 1 {
 		return "", fmt.Errorf("buildInsert: rowCount must be >= 1, got %d", rowCount)
 	}
 
-	verb, suffix := "INSERT INTO", ""
-	switch mode {
-	case "", "insert":
-		// default: fail loudly on a unique-key collision
-	case "insert-ignore":
-		verb = "INSERT IGNORE INTO"
-	case "replace":
-		verb = "REPLACE INTO"
-	case "upsert":
-		verb = "INSERT INTO"
-		sets := make([]string, len(fields))
-		for i, f := range fields {
-			sets[i] = fmt.Sprintf("%s=VALUES(%s)", f, f)
-		}
-		suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(sets, ", ")
-	default:
-		return "", fmt.Errorf("unknown write-mode %q (want insert-ignore|insert|replace|upsert)", mode)
+	verb, suffix, err := c.writeModeClauses()
+	if err != nil {
+		return "", err
 	}
 
-	oneRow := "(" + strings.Join(repeat("?", len(fields)), ", ") + ")"
+	oneRow := "(" + strings.Join(repeat("?", len(c.Fields)), ", ") + ")"
 	rows := strings.Join(repeat(oneRow, rowCount), ", ")
 	return fmt.Sprintf("%s %s (%s) VALUES %s%s",
-		verb, table, strings.Join(fields, ", "), rows, suffix), nil
-}
-
-// buildCreateTable renders a CREATE TABLE IF NOT EXISTS from a trusted,
-// author-supplied column/constraint body (the text that goes inside the
-// parentheses).
-func buildCreateTable(table, schema string) (string, error) {
-	if strings.TrimSpace(schema) == "" {
-		return "", fmt.Errorf("buildCreateTable: empty schema")
-	}
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, schema), nil
+		verb, c.Table, strings.Join(c.Fields, ", "), rows, suffix), nil
 }

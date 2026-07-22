@@ -52,17 +52,12 @@ func TestBuildInsert(t *testing.T) {
 		},
 		{
 			name: "insert-ignore, multi-row",
-			mode: "insert-ignore", rowCount: 3,
+			mode: WRITE_MODE_INSERT_IGNORE, rowCount: 3,
 			want: "INSERT IGNORE INTO t (a, b) VALUES (?, ?), (?, ?), (?, ?)",
 		},
 		{
-			name: "replace",
-			mode: "replace", rowCount: 1,
-			want: "REPLACE INTO t (a, b) VALUES (?, ?)",
-		},
-		{
 			name: "upsert",
-			mode: "upsert", rowCount: 2,
+			mode: WRITE_MODE_UPSERT, rowCount: 2,
 			want: "INSERT INTO t (a, b) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE a=VALUES(a), b=VALUES(b)",
 		},
 		{
@@ -75,17 +70,58 @@ func TestBuildInsert(t *testing.T) {
 			mode: "", rowCount: 0,
 			wantErr: true,
 		},
+		{
+			name: "increment mode without a column errors",
+			mode: WRITE_MODE_INCREMENT, rowCount: 1,
+			wantErr: true,
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildInsert(c.mode, "t", []string{"a", "b"}, c.rowCount)
+			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: c.mode}
+			got, err := cfg.buildInsert(c.rowCount)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %q", got)
 				}
 				return
 			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.want {
+				t.Fatalf("buildInsert =\n  %q\nwant\n  %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestBuildInsertIncrement(t *testing.T) {
+	cases := []struct {
+		name         string
+		rowCount     int
+		incrementCol string
+		want         string
+	}{
+		{
+			name:         "increment with column n",
+			rowCount:     1,
+			incrementCol: "n",
+			want:         "INSERT INTO t (a, b) VALUES (?, ?) ON DUPLICATE KEY UPDATE n=n+1",
+		},
+		{
+			name:         "increment with custom column name, multi-row",
+			rowCount:     2,
+			incrementCol: "count",
+			want:         "INSERT INTO t (a, b) VALUES (?, ?), (?, ?) ON DUPLICATE KEY UPDATE count=count+1",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := &Config{Table: "t", Fields: []string{"a", "b"}, WriteMode: WRITE_MODE_INCREMENT, IncrementColumn: c.incrementCol}
+			got, err := cfg.buildInsert(c.rowCount)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -167,18 +203,12 @@ func TestScalarString(t *testing.T) {
 	}
 }
 
-func TestBuildCreateTable(t *testing.T) {
-	got, err := buildCreateTable("captures", "id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP")
-	if err != nil {
+func TestConfigValidate(t *testing.T) {
+	if err := (&Config{WriteMode: WRITE_MODE_INCREMENT}).validate(); err == nil {
+		t.Fatal("expected error for increment mode without a column")
+	}
+	if err := (&Config{}).validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	want := "CREATE TABLE IF NOT EXISTS captures (id BIGINT PRIMARY KEY AUTO_INCREMENT, post_id BIGINT, body TEXT, captured_at TIMESTAMP)"
-	if got != want {
-		t.Fatalf("buildCreateTable =\n  %q\nwant\n  %q", got, want)
-	}
-
-	if _, err := buildCreateTable("t", "   "); err == nil {
-		t.Fatal("expected error for empty schema")
 	}
 }
 
@@ -271,7 +301,7 @@ func flushBatches(exec execer, config *Config, records []map[string]any) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch))
+		query, err := config.buildInsert(len(batch))
 		if err != nil {
 			return err
 		}

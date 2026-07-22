@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/psyduck-etl/sdk"
@@ -24,6 +25,7 @@ type Config struct {
 
 	InsertChunkSize int    `psy:"insert-chunk-size"`
 	WriteMode       string `psy:"write-mode"`
+	IncrementColumn string `psy:"increment-column"`
 	Schema          string `psy:"schema"`
 	acceptConfig
 }
@@ -113,10 +115,16 @@ var consumeSpec = []*sdk.Spec{
 	},
 	{
 		Name:        "write-mode",
-		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), replace, or upsert (INSERT ... ON DUPLICATE KEY UPDATE)",
+		Description: "How to write rows: insert (default; fail on a unique-key collision), insert-ignore (silently skip collisions), upsert (INSERT ... ON DUPLICATE KEY UPDATE), or increment (INSERT ... ON DUPLICATE KEY UPDATE col = col + 1; requires increment-column)",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "insert",
+		Default:     WRITE_MODE_INSERT,
+	},
+	{
+		Name:        "increment-column",
+		Description: "Column name to increment on duplicate key collision. Required when write-mode=increment; ignored otherwise",
+		Required:    false,
+		Type:        sdk.TypeString,
 	},
 	{
 		Name:        "schema",
@@ -198,6 +206,10 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
+				if err := config.validate(); err != nil {
+					return nil, err
+				}
+
 				if err := config.acceptConfig.Bind(); err != nil {
 					return nil, err
 				}
@@ -207,11 +219,8 @@ func Plugin() sdk.Plugin {
 					return nil, err
 				}
 
-				if config.Schema != "" {
-					create, err := buildCreateTable(config.Table, config.Schema)
-					if err != nil {
-						return nil, err
-					}
+				if strings.TrimSpace(config.Schema) != "" {
+					create := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", config.Table, config.Schema)
 					// Use ctx to allow schema bootstrap to be cancelled if bind times out.
 					if _, err := db.ExecContext(ctx, create); err != nil {
 						return nil, fmt.Errorf("ensure table %s: %w", config.Table, err)

@@ -33,7 +33,7 @@ func consumeInto(db *sql.DB, config *Config) sdk.Consumer {
 			if len(batch) == 0 {
 				return nil
 			}
-			query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch))
+			query, err := config.buildInsert(len(batch))
 			if err != nil {
 				return err
 			}
