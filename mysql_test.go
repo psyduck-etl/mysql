@@ -70,11 +70,16 @@ func TestBuildInsert(t *testing.T) {
 			mode: "", rowCount: 0,
 			wantErr: true,
 		},
+		{
+			name: "increment mode without a column errors",
+			mode: "increment", rowCount: 1,
+			wantErr: true,
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildInsert(c.mode, "t", []string{"a", "b"}, c.rowCount)
+			got, err := buildInsert(c.mode, "t", []string{"a", "b"}, c.rowCount, "")
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %q", got)
@@ -99,7 +104,7 @@ func TestBuildInsertIncrement(t *testing.T) {
 		want         string
 	}{
 		{
-			name:         "increment with default column name",
+			name:         "increment with column n",
 			rowCount:     1,
 			incrementCol: "n",
 			want:         "INSERT INTO t (a, b) VALUES (?, ?) ON DUPLICATE KEY UPDATE n=n+1",
@@ -114,12 +119,12 @@ func TestBuildInsertIncrement(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := buildInsertWithIncrement("increment", "t", []string{"a", "b"}, c.rowCount, c.incrementCol)
+			got, err := buildInsert("increment", "t", []string{"a", "b"}, c.rowCount, c.incrementCol)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != c.want {
-				t.Fatalf("buildInsertWithIncrement =\n  %q\nwant\n  %q", got, c.want)
+				t.Fatalf("buildInsert =\n  %q\nwant\n  %q", got, c.want)
 			}
 		})
 	}
@@ -300,11 +305,7 @@ func flushBatches(exec execer, config *Config, records []map[string]any) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		incrementCol := config.IncrementColumn
-		if incrementCol == "" {
-			incrementCol = "n"
-		}
-		query, err := buildInsertWithIncrement(config.WriteMode, config.Table, config.Fields, len(batch), incrementCol)
+		query, err := buildInsert(config.WriteMode, config.Table, config.Fields, len(batch), config.IncrementColumn)
 		if err != nil {
 			return err
 		}

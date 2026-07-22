@@ -121,10 +121,9 @@ var consumeSpec = []*sdk.Spec{
 	},
 	{
 		Name:        "increment-column",
-		Description: "Column name to increment on duplicate key collision (used only by write-mode=increment). Defaults to \"n\" if not specified",
+		Description: "Column name to increment on duplicate key collision. Required when write-mode=increment; ignored otherwise",
 		Required:    false,
 		Type:        sdk.TypeString,
-		Default:     "n",
 	},
 	{
 		Name:        "schema",
@@ -204,6 +203,10 @@ func Plugin() sdk.Plugin {
 				config := new(Config)
 				if err := parse(config); err != nil {
 					return nil, err
+				}
+
+				if config.WriteMode == "increment" && config.IncrementColumn == "" {
+					return nil, fmt.Errorf("mysql.table: increment-column is required when write-mode=increment")
 				}
 
 				if err := config.acceptConfig.Bind(); err != nil {
